@@ -22,16 +22,16 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::large_enum_variant)]
 
-use frame_support::{pallet_prelude::*, require_transactional, traits::Get, transactional, Parameter};
+use frame_support::{log, pallet_prelude::*, require_transactional, traits::Get, transactional, Parameter};
 use frame_system::{ensure_signed, pallet_prelude::*};
 use sp_runtime::{
 	traits::{AtLeast32BitUnsigned, Convert, MaybeSerializeDeserialize, Member, Zero},
 	DispatchError,
 };
-use sp_std::prelude::*;
+use sp_std::{prelude::*, result::Result};
 
-use xcm::v0::prelude::*;
-use xcm_executor::traits::WeightBounds;
+use xcm::prelude::*;
+use xcm_executor::traits::{InvertLocation, WeightBounds};
 
 pub use module::*;
 use orml_traits::{
@@ -54,6 +54,7 @@ use TransferKind::*;
 
 #[frame_support::pallet]
 pub mod module {
+
 	use super::*;
 
 	#[pallet::config]
@@ -94,16 +95,22 @@ pub mod module {
 		/// T::Weigher::weight(&msg)`.
 		#[pallet::constant]
 		type BaseXcmWeight: Get<Weight>;
+
+		/// Means of inverting a location.
+		type LocationInverter: InvertLocation;
 	}
 
 	#[pallet::event]
 	#[pallet::generate_deposit(fn deposit_event)]
-	#[pallet::metadata(T::AccountId = "AccountId", T::CurrencyId = "CurrencyId", T::Balance = "Balance")]
 	pub enum Event<T: Config> {
 		/// Transferred. \[sender, currency_id, amount, dest\]
 		Transferred(T::AccountId, T::CurrencyId, T::Balance, MultiLocation),
+		/// Transferred with fee. \[sender, currency_id, amount, fee, dest\]
+		TransferredWithFee(T::AccountId, T::CurrencyId, T::Balance, T::Balance, MultiLocation),
 		/// Transferred `MultiAsset`. \[sender, asset, dest\]
 		TransferredMultiAsset(T::AccountId, MultiAsset, MultiLocation),
+		/// Transferred `MultiAsset` with fee. \[sender, asset, fee, dest\]
+		TransferredMultiAssetWithFee(T::AccountId, MultiAsset, MultiAsset, MultiLocation),
 	}
 
 	#[pallet::error]
@@ -118,8 +125,26 @@ pub mod module {
 		NotCrossChainTransferableCurrency,
 		/// The message's weight could not be determined.
 		UnweighableMessage,
+		// TODO: expand into XcmExecutionFailed(XcmError) after https://github.com/paritytech/substrate/pull/10242 done
 		/// XCM execution failed.
 		XcmExecutionFailed,
+		/// Could not re-anchor the assets to declare the fees for the
+		/// destination chain.
+		CannotReanchor,
+		/// Could not get ancestry of asset reserve location.
+		InvalidAncestry,
+		/// Not fungible asset.
+		NotFungible,
+		/// The destination `MultiLocation` provided cannot be inverted.
+		DestinationNotInvertible,
+		/// The version of the `Versioned` value used is not able to be
+		/// interpreted.
+		BadVersion,
+		/// The fee MultiAsset is of different type than the asset to transfer.
+		DistincAssetAndFeeId,
+		/// The fee amount was zero when the fee specification extrinsic is
+		/// being used.
+		FeeCannotBeZero,
 	}
 
 	#[pallet::hooks]
@@ -148,11 +173,12 @@ pub mod module {
 			origin: OriginFor<T>,
 			currency_id: T::CurrencyId,
 			amount: T::Balance,
-			dest: Box<MultiLocation>,
+			dest: Box<VersionedMultiLocation>,
 			dest_weight: Weight,
 		) -> DispatchResult {
 			let who = ensure_signed(origin)?;
-			Self::do_transfer(who, currency_id, amount, *dest, dest_weight)
+			let dest: MultiLocation = (*dest).try_into().map_err(|()| Error::<T>::BadVersion)?;
+			Self::do_transfer(who, currency_id, amount, dest, dest_weight)
 		}
 
 		/// Transfer `MultiAsset`.
@@ -171,12 +197,97 @@ pub mod module {
 		#[transactional]
 		pub fn transfer_multiasset(
 			origin: OriginFor<T>,
-			asset: Box<MultiAsset>,
-			dest: Box<MultiLocation>,
+			asset: Box<VersionedMultiAsset>,
+			dest: Box<VersionedMultiLocation>,
 			dest_weight: Weight,
 		) -> DispatchResult {
 			let who = ensure_signed(origin)?;
-			Self::do_transfer_multiasset(who, *asset, *dest, dest_weight, true)
+			let asset: MultiAsset = (*asset).try_into().map_err(|()| Error::<T>::BadVersion)?;
+			let dest: MultiLocation = (*dest).try_into().map_err(|()| Error::<T>::BadVersion)?;
+			Self::do_transfer_multiasset(who, asset, dest, dest_weight, true)
+		}
+
+		/// Transfer native currencies specifying the fee and amount as
+		/// separate.
+		///
+		/// `dest_weight` is the weight for XCM execution on the dest chain, and
+		/// it would be charged from the transferred assets. If set below
+		/// requirements, the execution may fail and assets wouldn't be
+		/// received.
+		///
+		/// `fee` is the amount to be spent to pay for execution in destination
+		/// chain. Both fee and amount will be subtracted form the callers
+		/// balance.
+		///
+		/// If `fee` is not high enough to cover for the execution costs in the
+		/// destination chain, then the assets will be trapped in the
+		/// destination chain
+		///
+		/// It's a no-op if any error on local XCM execution or message sending.
+		/// Note sending assets out per se doesn't guarantee they would be
+		/// received. Receiving depends on if the XCM message could be delivered
+		/// by the network, and if the receiving chain would handle
+		/// messages correctly.
+		#[pallet::weight(Pallet::<T>::weight_of_transfer(currency_id.clone(), *amount, dest))]
+		#[transactional]
+		pub fn transfer_with_fee(
+			origin: OriginFor<T>,
+			currency_id: T::CurrencyId,
+			amount: T::Balance,
+			fee: T::Balance,
+			dest: Box<VersionedMultiLocation>,
+			dest_weight: Weight,
+		) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+			let dest: MultiLocation = (*dest).try_into().map_err(|()| Error::<T>::BadVersion)?;
+			// Zero fee is an error
+			if fee.is_zero() {
+				return Err(Error::<T>::FeeCannotBeZero.into());
+			}
+
+			Self::do_transfer_with_fee(who, currency_id, amount, fee, dest, dest_weight)
+		}
+
+		/// Transfer `MultiAsset` specifying the fee and amount as separate.
+		///
+		/// `dest_weight` is the weight for XCM execution on the dest chain, and
+		/// it would be charged from the transferred assets. If set below
+		/// requirements, the execution may fail and assets wouldn't be
+		/// received.
+		///
+		/// `fee` is the multiasset to be spent to pay for execution in
+		/// destination chain. Both fee and amount will be subtracted form the
+		/// callers balance For now we only accept fee and asset having the same
+		/// `MultiLocation` id.
+		///
+		/// If `fee` is not high enough to cover for the execution costs in the
+		/// destination chain, then the assets will be trapped in the
+		/// destination chain
+		///
+		/// It's a no-op if any error on local XCM execution or message sending.
+		/// Note sending assets out per se doesn't guarantee they would be
+		/// received. Receiving depends on if the XCM message could be delivered
+		/// by the network, and if the receiving chain would handle
+		/// messages correctly.
+		#[pallet::weight(Pallet::<T>::weight_of_transfer_multiasset(asset, dest))]
+		#[transactional]
+		pub fn transfer_multiasset_with_fee(
+			origin: OriginFor<T>,
+			asset: Box<VersionedMultiAsset>,
+			fee: Box<VersionedMultiAsset>,
+			dest: Box<VersionedMultiLocation>,
+			dest_weight: Weight,
+		) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+			let asset: MultiAsset = (*asset).try_into().map_err(|()| Error::<T>::BadVersion)?;
+			let fee: MultiAsset = (*fee).try_into().map_err(|()| Error::<T>::BadVersion)?;
+			let dest: MultiLocation = (*dest).try_into().map_err(|()| Error::<T>::BadVersion)?;
+			// Zero fee is an error
+			if fungible_amount(&fee).is_zero() {
+				return Err(Error::<T>::FeeCannotBeZero.into());
+			}
+
+			Self::do_transfer_multiasset_with_fee(who, asset, fee, dest, dest_weight, true)
 		}
 	}
 
@@ -188,16 +299,32 @@ pub mod module {
 			dest: MultiLocation,
 			dest_weight: Weight,
 		) -> DispatchResult {
-			let id: MultiLocation = T::CurrencyIdConvert::convert(currency_id.clone())
+			let location: MultiLocation = T::CurrencyIdConvert::convert(currency_id.clone())
 				.ok_or(Error::<T>::NotCrossChainTransferableCurrency)?;
 
-			let asset = MultiAsset::ConcreteFungible {
-				id,
-				amount: amount.into(),
-			};
+			let asset = (location, amount.into()).into();
 			Self::do_transfer_multiasset(who.clone(), asset, dest.clone(), dest_weight, false)?;
 
 			Self::deposit_event(Event::<T>::Transferred(who, currency_id, amount, dest));
+			Ok(())
+		}
+
+		fn do_transfer_with_fee(
+			who: T::AccountId,
+			currency_id: T::CurrencyId,
+			amount: T::Balance,
+			fee: T::Balance,
+			dest: MultiLocation,
+			dest_weight: Weight,
+		) -> DispatchResult {
+			let location: MultiLocation = T::CurrencyIdConvert::convert(currency_id.clone())
+				.ok_or(Error::<T>::NotCrossChainTransferableCurrency)?;
+
+			let asset = (location.clone(), amount.into()).into();
+			let fee_asset: MultiAsset = (location, fee.into()).into();
+			Self::do_transfer_multiasset_with_fee(who.clone(), asset, fee_asset, dest.clone(), dest_weight, false)?;
+
+			Self::deposit_event(Event::<T>::TransferredWithFee(who, currency_id, amount, fee, dest));
 			Ok(())
 		}
 
@@ -208,27 +335,85 @@ pub mod module {
 			dest_weight: Weight,
 			deposit_event: bool,
 		) -> DispatchResult {
-			if Self::is_zero_amount(&asset) {
+			if !asset.is_fungible(None) {
+				return Err(Error::<T>::NotFungible.into());
+			}
+
+			if fungible_amount(&asset).is_zero() {
 				return Ok(());
 			}
 
 			let (transfer_kind, dest, reserve, recipient) = Self::transfer_kind(&asset, &dest)?;
-			let buy_order = BuyExecution {
-				fees: All,
-				// Zero weight for additional XCM (since there are none to execute)
-				weight: 0,
-				debt: dest_weight,
-				halt_on_error: false,
-				xcm: vec![],
-			};
 			let mut msg = match transfer_kind {
 				SelfReserveAsset => {
-					Self::transfer_self_reserve_asset(asset.clone(), dest.clone(), recipient, buy_order)
+					Self::transfer_self_reserve_asset(asset.clone(), dest.clone(), recipient, dest_weight)?
 				}
-				ToReserve => Self::transfer_to_reserve(asset.clone(), dest.clone(), recipient, buy_order),
+				ToReserve => Self::transfer_to_reserve(asset.clone(), dest.clone(), recipient, dest_weight)?,
 				ToNonReserve => {
-					Self::transfer_to_non_reserve(asset.clone(), reserve, dest.clone(), recipient, buy_order)
+					Self::transfer_to_non_reserve(asset.clone(), reserve, dest.clone(), recipient, dest_weight)?
 				}
+			};
+
+			let origin_location = T::AccountIdToMultiLocation::convert(who.clone());
+			let weight = T::Weigher::weight(&mut msg).map_err(|()| Error::<T>::UnweighableMessage)?;
+			T::XcmExecutor::execute_xcm_in_credit(origin_location, msg, weight, weight)
+				.ensure_complete()
+				.map_err(|error| {
+					log::error!("Failed execute transfer message with {:?}", error);
+					Error::<T>::XcmExecutionFailed
+				})?;
+
+			if deposit_event {
+				Self::deposit_event(Event::<T>::TransferredMultiAsset(who, asset, dest));
+			}
+
+			Ok(())
+		}
+
+		fn do_transfer_multiasset_with_fee(
+			who: T::AccountId,
+			asset: MultiAsset,
+			fee: MultiAsset,
+			dest: MultiLocation,
+			dest_weight: Weight,
+			deposit_event: bool,
+		) -> DispatchResult {
+			if !asset.is_fungible(None) || !fee.is_fungible(None) {
+				return Err(Error::<T>::NotFungible.into());
+			}
+
+			if fungible_amount(&asset).is_zero() {
+				return Ok(());
+			}
+
+			// For now fee and asset id should be identical
+			// We can relax this assumption in the future
+			ensure!(fee.id == asset.id, Error::<T>::DistincAssetAndFeeId);
+
+			let (transfer_kind, dest, reserve, recipient) = Self::transfer_kind(&asset, &dest)?;
+			let mut msg = match transfer_kind {
+				SelfReserveAsset => Self::transfer_self_reserve_asset_with_fee(
+					asset.clone(),
+					fee.clone(),
+					dest.clone(),
+					recipient,
+					dest_weight,
+				)?,
+				ToReserve => Self::transfer_to_reserve_with_fee(
+					asset.clone(),
+					fee.clone(),
+					dest.clone(),
+					recipient,
+					dest_weight,
+				)?,
+				ToNonReserve => Self::transfer_to_non_reserve_with_fee(
+					asset.clone(),
+					fee.clone(),
+					reserve,
+					dest.clone(),
+					recipient,
+					dest_weight,
+				)?,
 			};
 
 			let origin_location = T::AccountIdToMultiLocation::convert(who.clone());
@@ -238,7 +423,7 @@ pub mod module {
 				.map_err(|_| Error::<T>::XcmExecutionFailed)?;
 
 			if deposit_event {
-				Self::deposit_event(Event::<T>::TransferredMultiAsset(who, asset, dest));
+				Self::deposit_event(Event::<T>::TransferredMultiAssetWithFee(who, asset, fee, dest));
 			}
 
 			Ok(())
@@ -248,32 +433,80 @@ pub mod module {
 			asset: MultiAsset,
 			dest: MultiLocation,
 			recipient: MultiLocation,
-			buy_order: Order<()>,
-		) -> Xcm<T::Call> {
-			WithdrawAsset {
-				assets: vec![asset],
-				effects: vec![DepositReserveAsset {
-					assets: vec![MultiAsset::All],
-					dest,
-					effects: vec![buy_order, Self::deposit_asset(recipient)],
-				}],
-			}
+			dest_weight: Weight,
+		) -> Result<Xcm<T::Call>, DispatchError> {
+			Ok(Xcm(vec![
+				WithdrawAsset(asset.clone().into()),
+				DepositReserveAsset {
+					assets: All.into(),
+					max_assets: 1,
+					dest: dest.clone(),
+					xcm: Xcm(vec![
+						Self::buy_execution(asset, &dest, dest_weight)?,
+						Self::deposit_asset(recipient),
+					]),
+				},
+			]))
+		}
+
+		fn transfer_self_reserve_asset_with_fee(
+			asset: MultiAsset,
+			fee: MultiAsset,
+			dest: MultiLocation,
+			recipient: MultiLocation,
+			dest_weight: Weight,
+		) -> Result<Xcm<T::Call>, DispatchError> {
+			Ok(Xcm(vec![
+				WithdrawAsset(vec![asset, fee.clone()].into()),
+				DepositReserveAsset {
+					assets: All.into(),
+					max_assets: 1,
+					dest: dest.clone(),
+					xcm: Xcm(vec![
+						Self::buy_execution(fee, &dest, dest_weight)?,
+						Self::deposit_asset(recipient),
+					]),
+				},
+			]))
 		}
 
 		fn transfer_to_reserve(
 			asset: MultiAsset,
 			reserve: MultiLocation,
 			recipient: MultiLocation,
-			buy_order: Order<()>,
-		) -> Xcm<T::Call> {
-			WithdrawAsset {
-				assets: vec![asset],
-				effects: vec![InitiateReserveWithdraw {
-					assets: vec![MultiAsset::All],
-					reserve,
-					effects: vec![buy_order, Self::deposit_asset(recipient)],
-				}],
-			}
+			dest_weight: Weight,
+		) -> Result<Xcm<T::Call>, DispatchError> {
+			Ok(Xcm(vec![
+				WithdrawAsset(asset.clone().into()),
+				InitiateReserveWithdraw {
+					assets: All.into(),
+					reserve: reserve.clone(),
+					xcm: Xcm(vec![
+						Self::buy_execution(asset, &reserve, dest_weight)?,
+						Self::deposit_asset(recipient),
+					]),
+				},
+			]))
+		}
+
+		fn transfer_to_reserve_with_fee(
+			asset: MultiAsset,
+			fee: MultiAsset,
+			reserve: MultiLocation,
+			recipient: MultiLocation,
+			dest_weight: Weight,
+		) -> Result<Xcm<T::Call>, DispatchError> {
+			Ok(Xcm(vec![
+				WithdrawAsset(vec![asset, fee.clone()].into()),
+				InitiateReserveWithdraw {
+					assets: All.into(),
+					reserve: reserve.clone(),
+					xcm: Xcm(vec![
+						Self::buy_execution(fee, &reserve, dest_weight)?,
+						Self::deposit_asset(recipient),
+					]),
+				},
+			]))
 		}
 
 		fn transfer_to_non_reserve(
@@ -281,59 +514,107 @@ pub mod module {
 			reserve: MultiLocation,
 			dest: MultiLocation,
 			recipient: MultiLocation,
-			buy_order: Order<()>,
-		) -> Xcm<T::Call> {
+			dest_weight: Weight,
+		) -> Result<Xcm<T::Call>, DispatchError> {
 			let mut reanchored_dest = dest.clone();
-			if reserve == Parent.into() {
-				if let MultiLocation::X2(Parent, Parachain(id)) = dest {
-					reanchored_dest = Parachain(id).into();
+			if reserve == MultiLocation::parent() {
+				match dest {
+					MultiLocation {
+						parents,
+						interior: X1(Parachain(id)),
+					} if parents == 1 => {
+						reanchored_dest = Parachain(id).into();
+					}
+					_ => {}
 				}
 			}
 
-			WithdrawAsset {
-				assets: vec![asset],
-				effects: vec![InitiateReserveWithdraw {
-					assets: vec![MultiAsset::All],
-					reserve,
-					effects: vec![
-						buy_order.clone(),
+			Ok(Xcm(vec![
+				WithdrawAsset(asset.clone().into()),
+				InitiateReserveWithdraw {
+					assets: All.into(),
+					reserve: reserve.clone(),
+					xcm: Xcm(vec![
+						Self::buy_execution(half(&asset), &reserve, dest_weight)?,
 						DepositReserveAsset {
-							assets: vec![MultiAsset::All],
+							assets: All.into(),
+							max_assets: 1,
 							dest: reanchored_dest,
-							effects: vec![buy_order, Self::deposit_asset(recipient)],
+							xcm: Xcm(vec![
+								Self::buy_execution(half(&asset), &dest, dest_weight)?,
+								Self::deposit_asset(recipient),
+							]),
 						},
-					],
-				}],
-			}
+					]),
+				},
+			]))
 		}
 
-		fn deposit_asset(recipient: MultiLocation) -> Order<()> {
+		fn transfer_to_non_reserve_with_fee(
+			asset: MultiAsset,
+			fee: MultiAsset,
+			reserve: MultiLocation,
+			dest: MultiLocation,
+			recipient: MultiLocation,
+			dest_weight: Weight,
+		) -> Result<Xcm<T::Call>, DispatchError> {
+			let mut reanchored_dest = dest.clone();
+			if reserve == MultiLocation::parent() {
+				match dest {
+					MultiLocation {
+						parents,
+						interior: X1(Parachain(id)),
+					} if parents == 1 => {
+						reanchored_dest = Parachain(id).into();
+					}
+					_ => {}
+				}
+			}
+
+			Ok(Xcm(vec![
+				WithdrawAsset(vec![asset, fee.clone()].into()),
+				InitiateReserveWithdraw {
+					assets: All.into(),
+					reserve: reserve.clone(),
+					xcm: Xcm(vec![
+						Self::buy_execution(half(&fee), &reserve, dest_weight)?,
+						DepositReserveAsset {
+							assets: All.into(),
+							max_assets: 1,
+							dest: reanchored_dest,
+							xcm: Xcm(vec![
+								Self::buy_execution(half(&fee), &dest, dest_weight)?,
+								Self::deposit_asset(recipient),
+							]),
+						},
+					]),
+				},
+			]))
+		}
+
+		fn deposit_asset(recipient: MultiLocation) -> Instruction<()> {
 			DepositAsset {
-				assets: vec![MultiAsset::All],
-				dest: recipient,
+				assets: All.into(),
+				max_assets: 1,
+				beneficiary: recipient,
 			}
 		}
 
-		fn is_zero_amount(asset: &MultiAsset) -> bool {
-			if let MultiAsset::ConcreteFungible { id: _, amount } = asset {
-				if amount.is_zero() {
-					return true;
-				}
-			}
-
-			if let MultiAsset::AbstractFungible { id: _, amount } = asset {
-				if amount.is_zero() {
-					return true;
-				}
-			}
-
-			false
+		fn buy_execution(
+			asset: MultiAsset,
+			at: &MultiLocation,
+			weight: Weight,
+		) -> Result<Instruction<()>, DispatchError> {
+			let inv_at = T::LocationInverter::invert_location(at).map_err(|()| Error::<T>::DestinationNotInvertible)?;
+			let fees = asset.reanchored(&inv_at).map_err(|_| Error::<T>::CannotReanchor)?;
+			Ok(BuyExecution {
+				fees,
+				weight_limit: WeightLimit::Limited(weight),
+			})
 		}
 
 		/// Ensure has the `dest` has chain part and recipient part.
-		fn ensure_valid_dest(
-			dest: &MultiLocation,
-		) -> sp_std::result::Result<(MultiLocation, MultiLocation), DispatchError> {
+		fn ensure_valid_dest(dest: &MultiLocation) -> Result<(MultiLocation, MultiLocation), DispatchError> {
 			if let (Some(dest), Some(recipient)) = (dest.chain_part(), dest.non_chain_part()) {
 				Ok((dest, recipient))
 			} else {
@@ -352,7 +633,7 @@ pub mod module {
 		fn transfer_kind(
 			asset: &MultiAsset,
 			dest: &MultiLocation,
-		) -> sp_std::result::Result<(TransferKind, MultiLocation, MultiLocation, MultiLocation), DispatchError> {
+		) -> Result<(TransferKind, MultiLocation, MultiLocation, MultiLocation), DispatchError> {
 			let (dest, recipient) = Self::ensure_valid_dest(dest)?;
 
 			let self_location = T::SelfLocation::get();
@@ -373,42 +654,42 @@ pub mod module {
 	// weights
 	impl<T: Config> Pallet<T> {
 		/// Returns weight of `transfer_multiasset` call.
-		fn weight_of_transfer_multiasset(asset: &MultiAsset, dest: &MultiLocation) -> Weight {
-			if let Ok((transfer_kind, dest, _, reserve)) = Self::transfer_kind(asset, dest) {
-				let mut msg = match transfer_kind {
-					SelfReserveAsset => WithdrawAsset {
-						assets: vec![asset.clone()],
-						effects: vec![DepositReserveAsset {
-							assets: vec![All],
-							dest,
-							effects: vec![],
-						}],
-					},
-					ToReserve | ToNonReserve => {
-						WithdrawAsset {
-							assets: vec![asset.clone()],
-							effects: vec![InitiateReserveWithdraw {
-								assets: vec![All],
+		fn weight_of_transfer_multiasset(asset: &VersionedMultiAsset, dest: &VersionedMultiLocation) -> Weight {
+			let asset = asset.clone().try_into();
+			let dest = dest.clone().try_into();
+			if let (Ok(asset), Ok(dest)) = (asset, dest) {
+				if let Ok((transfer_kind, dest, _, reserve)) = Self::transfer_kind(&asset, &dest) {
+					let mut msg = match transfer_kind {
+						SelfReserveAsset => Xcm(vec![
+							WithdrawAsset(MultiAssets::from(asset.clone())),
+							DepositReserveAsset {
+								assets: All.into(),
+								max_assets: 1,
+								dest,
+								xcm: Xcm(vec![]),
+							},
+						]),
+						ToReserve | ToNonReserve => Xcm(vec![
+							WithdrawAsset(MultiAssets::from(asset.clone())),
+							InitiateReserveWithdraw {
+								assets: All.into(),
 								// `dest` is always (equal to) `reserve` in both cases
 								reserve,
-								effects: vec![],
-							}],
-						}
-					}
-				};
-				T::Weigher::weight(&mut msg).map_or(Weight::max_value(), |w| T::BaseXcmWeight::get().saturating_add(w))
-			} else {
-				0
+								xcm: Xcm(vec![]),
+							},
+						]),
+					};
+					return T::Weigher::weight(&mut msg)
+						.map_or(Weight::max_value(), |w| T::BaseXcmWeight::get().saturating_add(w));
+				}
 			}
+			0
 		}
 
 		/// Returns weight of `transfer` call.
-		fn weight_of_transfer(currency_id: T::CurrencyId, amount: T::Balance, dest: &MultiLocation) -> Weight {
-			if let Some(id) = T::CurrencyIdConvert::convert(currency_id) {
-				let asset = MultiAsset::ConcreteFungible {
-					id,
-					amount: amount.into(),
-				};
+		fn weight_of_transfer(currency_id: T::CurrencyId, amount: T::Balance, dest: &VersionedMultiLocation) -> Weight {
+			if let Some(location) = T::CurrencyIdConvert::convert(currency_id) {
+				let asset = (location, amount.into()).into();
 				Self::weight_of_transfer_multiasset(&asset, dest)
 			} else {
 				0
@@ -437,5 +718,24 @@ pub mod module {
 		) -> DispatchResult {
 			Self::do_transfer_multiasset(who, asset, dest, dest_weight, true)
 		}
+	}
+}
+
+/// Returns amount if `asset` is fungible, or zero.
+fn fungible_amount(asset: &MultiAsset) -> u128 {
+	if let Fungible(amount) = &asset.fun {
+		*amount
+	} else {
+		Zero::zero()
+	}
+}
+
+fn half(asset: &MultiAsset) -> MultiAsset {
+	let half_amount = fungible_amount(asset)
+		.checked_div(2)
+		.expect("div 2 can't overflow; qed");
+	MultiAsset {
+		fun: Fungible(half_amount),
+		id: asset.id.clone(),
 	}
 }

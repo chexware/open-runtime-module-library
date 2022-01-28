@@ -53,6 +53,7 @@ use frame_support::{
 	transactional, BoundedVec,
 };
 use frame_system::{ensure_signed, pallet_prelude::*};
+use scale_info::TypeInfo;
 use sp_runtime::{
 	traits::{
 		AtLeast32BitUnsigned, Bounded, CheckedAdd, CheckedSub, MaybeSerializeDeserialize, Member, Saturating,
@@ -60,12 +61,7 @@ use sp_runtime::{
 	},
 	ArithmeticError, DispatchError, DispatchResult, RuntimeDebug,
 };
-use sp_std::{
-	convert::{Infallible, TryFrom, TryInto},
-	marker,
-	prelude::*,
-	vec::Vec,
-};
+use sp_std::{convert::Infallible, marker, prelude::*, vec::Vec};
 
 use orml_traits::{
 	arithmetic::{self, Signed},
@@ -75,10 +71,12 @@ use orml_traits::{
 };
 
 mod imbalances;
+mod impls;
 mod mock;
 mod tests;
 mod weights;
 
+pub use impls::*;
 pub use weights::WeightInfo;
 
 pub struct TransferDust<T, GetAccountId>(marker::PhantomData<(T, GetAccountId)>);
@@ -111,7 +109,7 @@ impl<T: Config> OnDust<T::AccountId, T::CurrencyId, T::Balance> for BurnDust<T> 
 
 /// A single lock on a balance. There can be many of these on an account and
 /// they "overlap", so the same balance is frozen by multiple locks.
-#[derive(Encode, Decode, Clone, PartialEq, Eq, MaxEncodedLen, RuntimeDebug)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, MaxEncodedLen, RuntimeDebug, TypeInfo)]
 pub struct BalanceLock<Balance> {
 	/// An identifier for this lock. Only one lock may be in existence for
 	/// each identifier.
@@ -122,7 +120,7 @@ pub struct BalanceLock<Balance> {
 }
 
 /// balance information for an account.
-#[derive(Encode, Decode, Clone, PartialEq, Eq, Default, MaxEncodedLen, RuntimeDebug)]
+#[derive(Encode, Decode, Clone, PartialEq, Eq, Default, MaxEncodedLen, RuntimeDebug, TypeInfo)]
 pub struct AccountData<Balance> {
 	/// Non-reserved part of the balance. There may still be restrictions on
 	/// this, but it is the total pool what may in principle be transferred,
@@ -187,7 +185,7 @@ pub mod module {
 			+ MaybeSerializeDeserialize;
 
 		/// The currency ID type
-		type CurrencyId: Parameter + Member + Copy + MaybeSerializeDeserialize + Ord;
+		type CurrencyId: Parameter + Member + Copy + MaybeSerializeDeserialize + Ord + TypeInfo;
 
 		/// Weight information for extrinsics in this module.
 		type WeightInfo: WeightInfo;
@@ -230,7 +228,6 @@ pub mod module {
 
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(crate) fn deposit_event)]
-	#[pallet::metadata(T::CurrencyId = "CurrencyId", T::AccountId = "AccountId", T::Balance = "Balance")]
 	pub enum Event<T: Config> {
 		/// An account was created with some free balance. \[currency_id,
 		/// account, free_balance\]
@@ -247,6 +244,10 @@ pub mod module {
 		/// Some balance was unreserved (moved from reserved to free).
 		/// \[currency_id, who, value\]
 		Unreserved(T::CurrencyId, T::AccountId, T::Balance),
+		/// Some reserved balance was repatriated (moved from reserved to
+		/// another account).
+		/// \[currency_id, from, to, amount_actually_moved, status\]
+		RepatriatedReserve(T::CurrencyId, T::AccountId, T::AccountId, T::Balance, BalanceStatus),
 		/// A balance was set by root. \[who, free, reserved\]
 		BalanceSet(T::CurrencyId, T::AccountId, T::Balance, T::Balance),
 	}
@@ -1131,14 +1132,12 @@ impl<T: Config> MultiReservableCurrency<T::AccountId> for Pallet<T> {
 		}
 		Self::ensure_can_withdraw(currency_id, who, value)?;
 
-		let account = Self::accounts(who, currency_id);
-		Self::set_free_balance(currency_id, who, account.free - value);
-		// Cannot overflow becuase total issuance is using the same balance type and
-		// this doesn't increase total issuance
-		Self::set_reserved_balance(currency_id, who, account.reserved + value);
-
-		Self::deposit_event(Event::Reserved(currency_id, who.clone(), value));
-		Ok(())
+		Self::mutate_account(who, currency_id, |account, _| {
+			account.free -= value;
+			account.reserved += value;
+			Self::deposit_event(Event::Reserved(currency_id, who.clone(), value));
+			Ok(())
+		})
 	}
 
 	/// Unreserve some funds, returning any amount that was unable to be
@@ -1150,13 +1149,13 @@ impl<T: Config> MultiReservableCurrency<T::AccountId> for Pallet<T> {
 			return value;
 		}
 
-		let account = Self::accounts(who, currency_id);
-		let actual = account.reserved.min(value);
-		Self::set_reserved_balance(currency_id, who, account.reserved - actual);
-		Self::set_free_balance(currency_id, who, account.free + actual);
-
-		Self::deposit_event(Event::Unreserved(currency_id, who.clone(), actual));
-		value - actual
+		Self::mutate_account(who, currency_id, |account, _| {
+			let actual = account.reserved.min(value);
+			account.reserved -= actual;
+			account.free += actual;
+			Self::deposit_event(Event::Unreserved(currency_id, who.clone(), actual));
+			value - actual
+		})
 	}
 
 	/// Move the reserved balance of one account into the balance of
@@ -1196,6 +1195,13 @@ impl<T: Config> MultiReservableCurrency<T::AccountId> for Pallet<T> {
 			}
 		}
 		Self::set_reserved_balance(currency_id, slashed, from_account.reserved - actual);
+		Self::deposit_event(Event::<T>::RepatriatedReserve(
+			currency_id,
+			slashed.clone(),
+			beneficiary.clone(),
+			actual,
+			status,
+		));
 		Ok(value - actual)
 	}
 }
@@ -1355,11 +1361,17 @@ impl<T: Config> fungibles::MutateHold<T::AccountId> for Pallet<T> {
 		source: &T::AccountId,
 		dest: &T::AccountId,
 		amount: Self::Balance,
-		_best_effort: bool,
+		best_effort: bool,
 		on_hold: bool,
 	) -> Result<Self::Balance, DispatchError> {
 		let status = if on_hold { Status::Reserved } else { Status::Free };
-		Self::repatriate_reserved(asset_id, source, dest, amount, status)
+		ensure!(
+			amount <= <Self as fungibles::InspectHold<T::AccountId>>::balance_on_hold(asset_id, source) || best_effort,
+			Error::<T>::BalanceTooLow
+		);
+		let gap = Self::repatriate_reserved(asset_id, source, dest, amount, status)?;
+		// return actual transferred amount
+		Ok(amount.saturating_sub(gap))
 	}
 }
 

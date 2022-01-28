@@ -43,7 +43,7 @@ use codec::Codec;
 use frame_support::{
 	pallet_prelude::*,
 	traits::{
-		Currency as PalletCurrency, ExistenceRequirement, Get, LockableCurrency as PalletLockableCurrency,
+		Currency as PalletCurrency, ExistenceRequirement, Get, Imbalance, LockableCurrency as PalletLockableCurrency,
 		ReservableCurrency as PalletReservableCurrency, WithdrawReasons,
 	},
 };
@@ -59,11 +59,7 @@ use sp_runtime::{
 	traits::{CheckedSub, MaybeSerializeDeserialize, StaticLookup, Zero},
 	DispatchError, DispatchResult,
 };
-use sp_std::{
-	convert::{TryFrom, TryInto},
-	fmt::Debug,
-	marker, result,
-};
+use sp_std::{fmt::Debug, marker, result};
 
 mod mock;
 mod tests;
@@ -109,11 +105,12 @@ pub mod module {
 		AmountIntoBalanceFailed,
 		/// Balance is too low.
 		BalanceTooLow,
+		/// Deposit result is not expected
+		DepositFailed,
 	}
 
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(crate) fn deposit_event)]
-	#[pallet::metadata(CurrencyIdOf<T> = "Currency", T::AccountId = "AccountId", BalanceOf<T> = "Balance", AmountOf<T> = "Amount")]
 	pub enum Event<T: Config> {
 		/// Currency transfer success. \[currency_id, from, to, amount\]
 		Transferred(CurrencyIdOf<T>, T::AccountId, T::AccountId, BalanceOf<T>),
@@ -567,7 +564,12 @@ where
 	}
 
 	fn deposit(who: &AccountId, amount: Self::Balance) -> DispatchResult {
-		let _ = Currency::deposit_creating(who, amount);
+		if !amount.is_zero() {
+			let deposit_result = Currency::deposit_creating(who, amount);
+			let actual_deposit = deposit_result.peek();
+			ensure!(actual_deposit == amount, Error::<T>::DepositFailed);
+		}
+
 		Ok(())
 	}
 
