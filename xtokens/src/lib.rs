@@ -24,20 +24,19 @@
 
 use frame_support::{log, pallet_prelude::*, require_transactional, traits::Get, transactional, Parameter};
 use frame_system::{ensure_signed, pallet_prelude::*};
-use sp_runtime::{
-	traits::{AtLeast32BitUnsigned, Convert, MaybeSerializeDeserialize, Member, Zero},
-	DispatchError,
-};
-use sp_std::{prelude::*, result::Result};
-
-use xcm::prelude::*;
-use xcm_executor::traits::{InvertLocation, WeightBounds};
-
 pub use module::*;
 use orml_traits::{
 	location::{Parse, Reserve},
 	XcmTransfer,
 };
+use sp_runtime::{
+	traits::{AtLeast32BitUnsigned, Convert, MaybeSerializeDeserialize, Member, Zero},
+	DispatchError,
+};
+use sp_std::{prelude::*, result::Result, vec};
+use xcm::prelude::*;
+use xcm_executor::traits::{InvertLocation, WeightBounds};
+use TransferKind::*;
 
 mod mock;
 mod tests;
@@ -50,11 +49,9 @@ enum TransferKind {
 	/// To non-reserve location.
 	ToNonReserve,
 }
-use TransferKind::*;
 
 #[frame_support::pallet]
 pub mod module {
-
 	use super::*;
 
 	#[pallet::config]
@@ -208,7 +205,7 @@ pub mod module {
 		/// received. Receiving depends on if the XCM message could be delivered
 		/// by the network, and if the receiving chain would handle
 		/// messages correctly.
-		#[pallet::weight(Pallet::<T>::weight_of_transfer(currency_id.clone(), *amount, dest))]
+		#[pallet::weight(Pallet::< T >::weight_of_transfer(currency_id.clone(), * amount, dest))]
 		#[transactional]
 		pub fn transfer(
 			origin: OriginFor<T>,
@@ -234,7 +231,7 @@ pub mod module {
 		/// received. Receiving depends on if the XCM message could be delivered
 		/// by the network, and if the receiving chain would handle
 		/// messages correctly.
-		#[pallet::weight(Pallet::<T>::weight_of_transfer_multiasset(asset, dest))]
+		#[pallet::weight(Pallet::< T >::weight_of_transfer_multiasset(asset, dest))]
 		#[transactional]
 		pub fn transfer_multiasset(
 			origin: OriginFor<T>,
@@ -269,7 +266,7 @@ pub mod module {
 		/// received. Receiving depends on if the XCM message could be delivered
 		/// by the network, and if the receiving chain would handle
 		/// messages correctly.
-		#[pallet::weight(Pallet::<T>::weight_of_transfer(currency_id.clone(), *amount, dest))]
+		#[pallet::weight(Pallet::< T >::weight_of_transfer(currency_id.clone(), * amount, dest))]
 		#[transactional]
 		pub fn transfer_with_fee(
 			origin: OriginFor<T>,
@@ -310,7 +307,7 @@ pub mod module {
 		/// received. Receiving depends on if the XCM message could be delivered
 		/// by the network, and if the receiving chain would handle
 		/// messages correctly.
-		#[pallet::weight(Pallet::<T>::weight_of_transfer_multiasset(asset, dest))]
+		#[pallet::weight(Pallet::< T >::weight_of_transfer_multiasset(asset, dest))]
 		#[transactional]
 		pub fn transfer_multiasset_with_fee(
 			origin: OriginFor<T>,
@@ -346,7 +343,7 @@ pub mod module {
 		/// received. Receiving depends on if the XCM message could be delivered
 		/// by the network, and if the receiving chain would handle
 		/// messages correctly.
-		#[pallet::weight(Pallet::<T>::weight_of_transfer_multicurrencies(currencies, fee_item, dest))]
+		#[pallet::weight(Pallet::< T >::weight_of_transfer_multicurrencies(currencies, fee_item, dest))]
 		#[transactional]
 		pub fn transfer_multicurrencies(
 			origin: OriginFor<T>,
@@ -376,7 +373,7 @@ pub mod module {
 		/// received. Receiving depends on if the XCM message could be delivered
 		/// by the network, and if the receiving chain would handle
 		/// messages correctly.
-		#[pallet::weight(Pallet::<T>::weight_of_transfer_multiassets(assets, fee_item, dest))]
+		#[pallet::weight(Pallet::< T >::weight_of_transfer_multiassets(assets, fee_item, dest))]
 		#[transactional]
 		pub fn transfer_multiassets(
 			origin: OriginFor<T>,
