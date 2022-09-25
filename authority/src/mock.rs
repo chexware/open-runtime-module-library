@@ -4,7 +4,11 @@
 
 use super::*;
 use codec::{Decode, Encode};
-use frame_support::{parameter_types, traits::Everything, weights::Weight};
+use frame_support::{
+	parameter_types,
+	traits::{ConstU64, EqualPrivilegeOnly, Everything},
+	weights::Weight,
+};
 use frame_system::{ensure_root, ensure_signed, EnsureRoot};
 use sp_core::H256;
 use sp_runtime::{
@@ -19,7 +23,6 @@ pub type AccountId = u128;
 pub type BlockNumber = u64;
 
 parameter_types! {
-	pub const BlockHashCount: u64 = 250;
 	pub BlockWeights: frame_system::limits::BlockWeights =
 			frame_system::limits::BlockWeights::simple_max(2_000_000_000_000);
 }
@@ -35,7 +38,7 @@ impl frame_system::Config for Runtime {
 	type Lookup = IdentityLookup<Self::AccountId>;
 	type Header = Header;
 	type Event = Event;
-	type BlockHashCount = BlockHashCount;
+	type BlockHashCount = ConstU64<250>;
 	type BlockWeights = ();
 	type BlockLength = ();
 	type Version = ();
@@ -48,10 +51,13 @@ impl frame_system::Config for Runtime {
 	type SystemWeightInfo = ();
 	type SS58Prefix = ();
 	type OnSetCode = ();
+	type MaxConsumers = ConstU32<16>;
 }
 
 parameter_types! {
 	pub MaximumSchedulerWeight: Weight = Perbill::from_percent(80) * BlockWeights::get().max_block;
+	// Retry a scheduled item every 10 blocks (1 minute) until the preimage exists.
+	pub const NoPreimagePostponement: Option<u64> = Some(10);
 }
 impl pallet_scheduler::Config for Runtime {
 	type Event = Event;
@@ -62,9 +68,12 @@ impl pallet_scheduler::Config for Runtime {
 	type ScheduleOrigin = EnsureRoot<u128>;
 	type MaxScheduledPerBlock = ();
 	type WeightInfo = ();
+	type OriginPrivilegeCmp = EqualPrivilegeOnly;
+	type PreimageProvider = ();
+	type NoPreimagePostponement = NoPreimagePostponement;
 }
 
-#[derive(Clone, Encode, Decode, Eq, PartialEq, Ord, PartialOrd, Debug)]
+#[derive(Clone, Encode, Decode, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
 pub enum MockAsOriginId {
 	Root,
 	Account1,

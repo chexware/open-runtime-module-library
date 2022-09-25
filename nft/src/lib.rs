@@ -23,17 +23,18 @@
 
 use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::{ensure, pallet_prelude::*, traits::Get, BoundedVec, Parameter};
+use scale_info::TypeInfo;
 use sp_runtime::{
 	traits::{AtLeast32BitUnsigned, CheckedAdd, CheckedSub, MaybeSerializeDeserialize, Member, One, Zero},
 	ArithmeticError, DispatchError, DispatchResult, RuntimeDebug,
 };
-use sp_std::{convert::TryInto, vec::Vec};
+use sp_std::vec::Vec;
 
 mod mock;
 mod tests;
 
 /// Class info
-#[derive(Encode, Decode, Clone, Eq, PartialEq, MaxEncodedLen, RuntimeDebug)]
+#[derive(Encode, Decode, Clone, Eq, PartialEq, MaxEncodedLen, RuntimeDebug, TypeInfo)]
 pub struct ClassInfo<TokenId, AccountId, Data, ClassMetadataOf> {
 	/// Class metadata
 	pub metadata: ClassMetadataOf,
@@ -46,7 +47,7 @@ pub struct ClassInfo<TokenId, AccountId, Data, ClassMetadataOf> {
 }
 
 /// Token info
-#[derive(Encode, Decode, Clone, Eq, PartialEq, MaxEncodedLen, RuntimeDebug)]
+#[derive(Encode, Decode, Clone, Eq, PartialEq, MaxEncodedLen, RuntimeDebug, TypeInfo)]
 pub struct TokenInfo<AccountId, Data, TokenMetadataOf> {
 	/// Token metadata
 	pub metadata: TokenMetadataOf,
@@ -65,9 +66,9 @@ pub mod module {
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
 		/// The class ID type
-		type ClassId: Parameter + Member + AtLeast32BitUnsigned + Default + Copy;
+		type ClassId: Parameter + Member + AtLeast32BitUnsigned + Default + Copy + MaxEncodedLen;
 		/// The token ID type
-		type TokenId: Parameter + Member + AtLeast32BitUnsigned + Default + Copy;
+		type TokenId: Parameter + Member + AtLeast32BitUnsigned + Default + Copy + MaxEncodedLen;
 		/// The class properties type
 		type ClassData: Parameter + Member + MaybeSerializeDeserialize;
 		/// The token properties type
@@ -187,6 +188,8 @@ pub mod module {
 	}
 
 	#[pallet::pallet]
+	#[pallet::generate_store(pub(super) trait Store)]
+	#[pallet::without_storage_info]
 	pub struct Pallet<T>(_);
 
 	#[pallet::hooks]

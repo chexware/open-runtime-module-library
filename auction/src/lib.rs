@@ -13,6 +13,7 @@
 #![allow(clippy::string_lit_as_bytes)]
 #![allow(clippy::unused_unit)]
 
+use codec::MaxEncodedLen;
 use frame_support::pallet_prelude::*;
 use frame_system::{ensure_signed, pallet_prelude::*};
 use orml_traits::{Auction, AuctionHandler, AuctionInfo, Change};
@@ -37,7 +38,13 @@ pub mod module {
 		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
 
 		/// The balance type for bidding.
-		type Balance: Parameter + Member + AtLeast32BitUnsigned + Default + Copy + MaybeSerializeDeserialize;
+		type Balance: Parameter
+			+ Member
+			+ AtLeast32BitUnsigned
+			+ Default
+			+ Copy
+			+ MaybeSerializeDeserialize
+			+ MaxEncodedLen;
 
 		/// The auction ID type.
 		type AuctionId: Parameter
@@ -47,7 +54,8 @@ pub mod module {
 			+ Copy
 			+ MaybeSerializeDeserialize
 			+ Bounded
-			+ codec::FullCodec;
+			+ codec::FullCodec
+			+ codec::MaxEncodedLen;
 
 		/// The `AuctionHandler` that allow custom bidding logic and handles
 		/// auction result.
@@ -68,10 +76,13 @@ pub mod module {
 
 	#[pallet::event]
 	#[pallet::generate_deposit(fn deposit_event)]
-	#[pallet::metadata(T::AuctionId = "AuctionId", T::AccountId = "AccountId", T::Balance = "Balance")]
 	pub enum Event<T: Config> {
-		/// A bid is placed. [auction_id, bidder, bidding_amount]
-		Bid(T::AuctionId, T::AccountId, T::Balance),
+		/// A bid is placed
+		Bid {
+			auction_id: T::AuctionId,
+			bidder: T::AccountId,
+			amount: T::Balance,
+		},
 	}
 
 	/// Stores on-going and future auctions. Closed auction are removed.
@@ -92,6 +103,7 @@ pub mod module {
 		StorageDoubleMap<_, Twox64Concat, T::BlockNumber, Blake2_128Concat, T::AuctionId, (), OptionQuery>;
 
 	#[pallet::pallet]
+	#[pallet::generate_store(pub(super) trait Store)]
 	pub struct Pallet<T>(_);
 
 	#[pallet::hooks]
@@ -152,7 +164,11 @@ pub mod module {
 				Ok(())
 			})?;
 
-			Self::deposit_event(Event::Bid(id, from, value));
+			Self::deposit_event(Event::Bid {
+				auction_id: id,
+				bidder: from,
+				amount: value,
+			});
 			Ok(())
 		}
 	}

@@ -6,8 +6,7 @@
 use frame_support::{pallet_prelude::*, traits::EnsureOrigin};
 use frame_system::pallet_prelude::*;
 use sp_std::boxed::Box;
-
-use xcm::v0::prelude::*;
+use xcm::{latest::prelude::*, VersionedMultiLocation, VersionedXcm};
 
 pub use module::*;
 
@@ -22,7 +21,7 @@ pub mod module {
 		/// The required origin for sending XCM as parachain sovereign.
 		///
 		/// Typically root or the majority of collective.
-		type SovereignOrigin: EnsureOrigin<Self::Origin>;
+		type SovereignOrigin: EnsureOrigin<<Self as frame_system::Config>::Origin>;
 	}
 
 	#[pallet::pallet]
@@ -31,8 +30,8 @@ pub mod module {
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
-		/// XCM message sent. \[from, to, message\]
-		Sent(MultiLocation, MultiLocation, Xcm<()>),
+		/// XCM message sent. \[to, message\]
+		Sent { to: MultiLocation, message: Xcm<()> },
 	}
 
 	#[pallet::error]
@@ -43,6 +42,9 @@ pub mod module {
 		/// The message and destination was recognized as being reachable but
 		/// the operation could not be completed.
 		SendFailure,
+		/// The version of the `Versioned` value used is not able to be
+		/// interpreted.
+		BadVersion,
 	}
 
 	#[pallet::call]
@@ -51,17 +53,18 @@ pub mod module {
 		#[pallet::weight(100_000_000)]
 		pub fn send_as_sovereign(
 			origin: OriginFor<T>,
-			dest: Box<MultiLocation>,
-			message: Box<Xcm<()>>,
+			dest: Box<VersionedMultiLocation>,
+			message: Box<VersionedXcm<()>>,
 		) -> DispatchResult {
 			let _ = T::SovereignOrigin::ensure_origin(origin)?;
-			pallet_xcm::Pallet::<T>::send_xcm(MultiLocation::Null, *dest.clone(), *message.clone()).map_err(
-				|e| match e {
-					XcmError::CannotReachDestination(..) => Error::<T>::Unreachable,
-					_ => Error::<T>::SendFailure,
-				},
-			)?;
-			Self::deposit_event(Event::Sent(MultiLocation::Null, *dest, *message));
+			let dest = MultiLocation::try_from(*dest).map_err(|()| Error::<T>::BadVersion)?;
+			let message: Xcm<()> = (*message).try_into().map_err(|()| Error::<T>::BadVersion)?;
+
+			pallet_xcm::Pallet::<T>::send_xcm(Here, dest.clone(), message.clone()).map_err(|e| match e {
+				SendError::CannotReachDestination(..) => Error::<T>::Unreachable,
+				_ => Error::<T>::SendFailure,
+			})?;
+			Self::deposit_event(Event::Sent { to: dest, message });
 			Ok(())
 		}
 	}

@@ -11,24 +11,30 @@ use sp_std::{
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
 
+pub use asset_registry::{FixedConversionRateProvider, WeightToFeeConverter};
 pub use auction::{Auction, AuctionHandler, AuctionInfo, OnNewBidResult};
 pub use currency::{
 	BalanceStatus, BasicCurrency, BasicCurrencyExtended, BasicLockableCurrency, BasicReservableCurrency,
-	LockIdentifier, MultiCurrency, MultiCurrencyExtended, MultiLockableCurrency, MultiReservableCurrency, OnDust,
+	LockIdentifier, MultiCurrency, MultiCurrencyExtended, MultiLockableCurrency, MultiReservableCurrency,
+	NamedBasicReservableCurrency, NamedMultiReservableCurrency, OnDust,
 };
 pub use data_provider::{DataFeeder, DataProvider, DataProviderExtended};
 pub use get_by_key::GetByKey;
-pub use nft::NFT;
+pub use multi_asset::ConcreteFungibleAsset;
+pub use nft::InspectExtended;
 pub use price::{DefaultPriceProvider, PriceProvider};
 pub use rewards::RewardHandler;
+use scale_info::TypeInfo;
 pub use xcm_transfer::XcmTransfer;
 
 pub mod arithmetic;
+pub mod asset_registry;
 pub mod auction;
 pub mod currency;
 pub mod data_provider;
 pub mod get_by_key;
 pub mod location;
+pub mod multi_asset;
 pub mod nft;
 pub mod price;
 pub mod rewards;
@@ -52,7 +58,7 @@ pub trait CombineData<Key, TimestampedValue> {
 }
 
 /// Indicate if should change a value
-#[derive(Encode, Decode, Clone, Eq, PartialEq, RuntimeDebug)]
+#[derive(Encode, Decode, Clone, Eq, PartialEq, RuntimeDebug, TypeInfo)]
 pub enum Change<Value> {
 	/// No change.
 	NoChange,
