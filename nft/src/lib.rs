@@ -22,7 +22,7 @@
 #![allow(clippy::unused_unit)]
 
 use codec::{Decode, Encode, MaxEncodedLen};
-use frame_support::{ensure, pallet_prelude::*, traits::Get, BoundedVec, Parameter};
+use frame_support::{ensure, pallet_prelude::*, traits::{Get, Currency, ReservableCurrency}, BoundedVec, Parameter};
 use scale_info::TypeInfo;
 use sp_runtime::{
 	traits::{AtLeast32BitUnsigned, CheckedAdd, CheckedSub, MaybeSerializeDeserialize, Member, One, Zero},
@@ -67,6 +67,8 @@ pub mod module {
 	pub trait Config: frame_system::Config {
 		/// The class ID type
 		type ClassId: Parameter + Member + AtLeast32BitUnsigned + Default + Copy + MaxEncodedLen;
+		/// Currency type for reserve/unreserve balance
+		type Currency: Currency<Self::AccountId> + ReservableCurrency<Self::AccountId>;
 		/// The token ID type
 		type TokenId: Parameter + Member + AtLeast32BitUnsigned + Default + Copy + MaxEncodedLen;
 		/// The class properties type
@@ -101,6 +103,7 @@ pub mod module {
 		<T as Config>::ClassData,
 		Vec<GenesisTokenData<T>>, // Vector of tokens belonging to this class
 	);
+	pub type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
 	/// Error for non-fungible-token module.
 	#[pallet::error]
@@ -158,6 +161,26 @@ pub mod module {
 			NMapKey<Blake2_128Concat, T::TokenId>,
 		),
 		(),
+		ValueQuery,
+	>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn get_stackable_collection)]
+	/// Index stackable collections by (class ID, token ID)
+	pub(super) type StackableCollection<T: Config> =
+		StorageMap<_, Blake2_128Concat, (T::ClassId, T::TokenId), (), OptionQuery>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn get_stackable_collections_balances)]
+	/// Index stackable collections balances
+	pub(super) type StackableCollectionsBalances<T: Config> = StorageNMap<
+		_,
+		(
+			NMapKey<Blake2_128Concat, T::ClassId>,
+			NMapKey<Blake2_128Concat, T::TokenId>,
+			NMapKey<Blake2_128Concat, T::AccountId>,
+		),
+		BalanceOf<T>,
 		ValueQuery,
 	>;
 
