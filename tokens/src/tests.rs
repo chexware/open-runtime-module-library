@@ -5,7 +5,7 @@
 use super::*;
 use frame_support::{assert_noop, assert_ok};
 use frame_system::RawOrigin;
-use mock::{Event, *};
+use mock::*;
 use sp_runtime::{traits::BadOrigin, TokenError};
 
 // *************************************************
@@ -36,7 +36,7 @@ fn transfer_should_work() {
 		.build()
 		.execute_with(|| {
 			assert_ok!(Tokens::transfer(Some(ALICE).into(), BOB, DOT, 50));
-			System::assert_last_event(Event::Tokens(crate::Event::Transfer {
+			System::assert_last_event(RuntimeEvent::Tokens(crate::Event::Transfer {
 				currency_id: DOT,
 				from: ALICE,
 				to: BOB,
@@ -55,7 +55,7 @@ fn transfer_should_work() {
 				Error::<Runtime>::ExistentialDeposit,
 			);
 			assert_ok!(Tokens::transfer(Some(ALICE).into(), CHARLIE, DOT, 2));
-			assert_eq!(TrackCreatedAccounts::accounts(), vec![(CHARLIE, DOT)]);
+			assert_eq!(TrackCreatedAccounts::<Runtime>::accounts(), vec![(CHARLIE, DOT)]);
 
 			// imply AllowDeath
 			assert!(Accounts::<Runtime>::contains_key(ALICE, DOT));
@@ -83,7 +83,7 @@ fn transfer_keep_alive_should_work() {
 			);
 
 			assert_ok!(Tokens::transfer_keep_alive(Some(ALICE).into(), BOB, DOT, 98));
-			System::assert_last_event(Event::Tokens(crate::Event::Transfer {
+			System::assert_last_event(RuntimeEvent::Tokens(crate::Event::Transfer {
 				currency_id: DOT,
 				from: ALICE,
 				to: BOB,
@@ -102,7 +102,7 @@ fn transfer_all_keep_alive_should_work() {
 		.execute_with(|| {
 			assert_eq!(Tokens::free_balance(DOT, &ALICE), 100);
 			assert_ok!(Tokens::transfer_all(Some(ALICE).into(), CHARLIE, DOT, true));
-			System::assert_has_event(Event::Tokens(crate::Event::Transfer {
+			System::assert_has_event(RuntimeEvent::Tokens(crate::Event::Transfer {
 				currency_id: DOT,
 				from: ALICE,
 				to: CHARLIE,
@@ -114,7 +114,7 @@ fn transfer_all_keep_alive_should_work() {
 			assert_eq!(Tokens::accounts(&BOB, DOT).frozen, 50);
 			assert_eq!(Tokens::free_balance(DOT, &BOB), 100);
 			assert_ok!(Tokens::transfer_all(Some(BOB).into(), CHARLIE, DOT, true));
-			System::assert_has_event(Event::Tokens(crate::Event::Transfer {
+			System::assert_has_event(RuntimeEvent::Tokens(crate::Event::Transfer {
 				currency_id: DOT,
 				from: BOB,
 				to: CHARLIE,
@@ -132,8 +132,8 @@ fn transfer_all_allow_death_should_work() {
 			assert!(Accounts::<Runtime>::contains_key(ALICE, DOT));
 			assert_eq!(Tokens::free_balance(DOT, &ALICE), 100);
 			assert_ok!(Tokens::transfer_all(Some(ALICE).into(), CHARLIE, DOT, false));
-			assert_eq!(TrackCreatedAccounts::accounts(), vec![(CHARLIE, DOT)]);
-			System::assert_last_event(Event::Tokens(crate::Event::Transfer {
+			assert_eq!(TrackCreatedAccounts::<Runtime>::accounts(), vec![(CHARLIE, DOT)]);
+			System::assert_last_event(RuntimeEvent::Tokens(crate::Event::Transfer {
 				currency_id: DOT,
 				from: ALICE,
 				to: CHARLIE,
@@ -141,13 +141,13 @@ fn transfer_all_allow_death_should_work() {
 			}));
 			assert!(!Accounts::<Runtime>::contains_key(ALICE, DOT));
 			assert_eq!(Tokens::free_balance(DOT, &ALICE), 0);
-			assert_eq!(TrackKilledAccounts::accounts(), vec![(ALICE, DOT)]);
+			assert_eq!(TrackKilledAccounts::<Runtime>::accounts(), vec![(ALICE, DOT)]);
 
 			assert_ok!(Tokens::set_lock(ID_1, DOT, &BOB, 50));
 			assert_eq!(Tokens::accounts(&BOB, DOT).frozen, 50);
 			assert_eq!(Tokens::free_balance(DOT, &BOB), 100);
 			assert_ok!(Tokens::transfer_all(Some(BOB).into(), CHARLIE, DOT, false));
-			System::assert_last_event(Event::Tokens(crate::Event::Transfer {
+			System::assert_last_event(RuntimeEvent::Tokens(crate::Event::Transfer {
 				currency_id: DOT,
 				from: BOB,
 				to: CHARLIE,
@@ -172,14 +172,14 @@ fn force_transfer_should_work() {
 
 			// imply AllowDeath
 			assert_ok!(Tokens::force_transfer(RawOrigin::Root.into(), ALICE, BOB, DOT, 100));
-			System::assert_last_event(Event::Tokens(crate::Event::Transfer {
+			System::assert_last_event(RuntimeEvent::Tokens(crate::Event::Transfer {
 				currency_id: DOT,
 				from: ALICE,
 				to: BOB,
 				amount: 100,
 			}));
 			assert!(!Accounts::<Runtime>::contains_key(ALICE, DOT));
-			assert_eq!(TrackKilledAccounts::accounts(), vec![(ALICE, DOT)]);
+			assert_eq!(TrackKilledAccounts::<Runtime>::accounts(), vec![(ALICE, DOT)]);
 			assert_eq!(Tokens::free_balance(DOT, &ALICE), 0);
 			assert_eq!(Tokens::free_balance(DOT, &BOB), 200);
 		});
@@ -218,7 +218,7 @@ fn set_balance_should_work() {
 			assert_eq!(Tokens::total_issuance(DOT), 200);
 
 			assert_ok!(Tokens::set_balance(RawOrigin::Root.into(), ALICE, DOT, 200, 100));
-			System::assert_has_event(Event::Tokens(crate::Event::BalanceSet {
+			System::assert_has_event(RuntimeEvent::Tokens(crate::Event::BalanceSet {
 				currency_id: DOT,
 				who: ALICE,
 				free: 200,
@@ -234,7 +234,7 @@ fn set_balance_should_work() {
 			assert_eq!(Tokens::reserved_balance(DOT, &BOB), 0);
 
 			assert_ok!(Tokens::set_balance(RawOrigin::Root.into(), BOB, DOT, 0, 0));
-			System::assert_has_event(Event::Tokens(crate::Event::BalanceSet {
+			System::assert_has_event(RuntimeEvent::Tokens(crate::Event::BalanceSet {
 				currency_id: DOT,
 				who: BOB,
 				free: 0,
@@ -251,7 +251,7 @@ fn set_balance_should_work() {
 
 			// below ED,
 			assert_ok!(Tokens::set_balance(RawOrigin::Root.into(), CHARLIE, DOT, 1, 0));
-			System::assert_has_event(Event::Tokens(crate::Event::BalanceSet {
+			System::assert_has_event(RuntimeEvent::Tokens(crate::Event::BalanceSet {
 				currency_id: DOT,
 				who: CHARLIE,
 				free: 0,
@@ -1000,7 +1000,7 @@ fn endowed_account_work() {
 		assert_eq!(System::providers(&ALICE), 0);
 		assert!(!Accounts::<Runtime>::contains_key(ALICE, DOT));
 		Tokens::set_free_balance(DOT, &ALICE, 100);
-		System::assert_last_event(Event::Tokens(crate::Event::Endowed {
+		System::assert_last_event(RuntimeEvent::Tokens(crate::Event::Endowed {
 			currency_id: DOT,
 			who: ALICE,
 			amount: 100,
@@ -1084,7 +1084,7 @@ fn dust_removal_work() {
 			assert_eq!(Tokens::free_balance(DOT, &ALICE), 100);
 			assert_eq!(Tokens::free_balance(DOT, &DustReceiver::get()), 0);
 			Tokens::set_free_balance(DOT, &ALICE, 1);
-			System::assert_last_event(Event::Tokens(crate::Event::DustLost {
+			System::assert_last_event(RuntimeEvent::Tokens(crate::Event::DustLost {
 				currency_id: DOT,
 				who: ALICE,
 				amount: 1,
@@ -1103,7 +1103,7 @@ fn dust_removal_work() {
 			assert!(Accounts::<Runtime>::contains_key(DAVE, DOT));
 			assert_eq!(System::providers(&DAVE), 1);
 			assert_eq!(Tokens::free_balance(DOT, &DAVE), 1);
-			System::assert_last_event(Event::Tokens(crate::Event::Endowed {
+			System::assert_last_event(RuntimeEvent::Tokens(crate::Event::Endowed {
 				currency_id: DOT,
 				who: DAVE,
 				amount: 1,
@@ -1122,7 +1122,7 @@ fn account_survive_due_to_dust_transfer_failure() {
 		assert!(!Accounts::<Runtime>::contains_key(ALICE, DOT));
 
 		Tokens::set_reserved_balance(DOT, &ALICE, 1);
-		System::assert_last_event(Event::Tokens(crate::Event::DustLost {
+		System::assert_last_event(RuntimeEvent::Tokens(crate::Event::DustLost {
 			currency_id: DOT,
 			who: ALICE,
 			amount: 1,
@@ -1154,16 +1154,118 @@ fn exceeding_max_reserves_should_fail() {
 fn lifecycle_callbacks_are_activated() {
 	ExtBuilder::default().build().execute_with(|| {
 		assert_ok!(Tokens::set_balance(RawOrigin::Root.into(), ALICE, DOT, 200, 0));
-		assert_eq!(TrackCreatedAccounts::accounts(), vec![(ALICE, DOT)]);
+		assert_eq!(TrackCreatedAccounts::<Runtime>::accounts(), vec![(ALICE, DOT)]);
 
 		assert_ok!(Tokens::set_balance(RawOrigin::Root.into(), ALICE, BTC, 200, 0));
-		assert_eq!(TrackCreatedAccounts::accounts(), vec![(ALICE, DOT), (ALICE, BTC)]);
+		assert_eq!(
+			TrackCreatedAccounts::<Runtime>::accounts(),
+			vec![(ALICE, DOT), (ALICE, BTC)]
+		);
 
 		assert_ok!(Tokens::transfer_all(Some(ALICE).into(), CHARLIE, BTC, false));
 		assert_eq!(
-			TrackCreatedAccounts::accounts(),
+			TrackCreatedAccounts::<Runtime>::accounts(),
 			vec![(ALICE, DOT), (ALICE, BTC), (CHARLIE, BTC)]
 		);
-		assert_eq!(TrackKilledAccounts::accounts(), vec![(ALICE, BTC)]);
+		assert_eq!(TrackKilledAccounts::<Runtime>::accounts(), vec![(ALICE, BTC)]);
 	})
+}
+
+// *************************************************
+// tests for mutation hooks (OnDeposit, OnTransfer)
+// (tests for the OnSlash hook can be found in `./tests_multicurrency.rs`)
+// *************************************************
+
+#[test]
+fn deposit_hooks_work() {
+	ExtBuilder::default().build().execute_with(|| {
+		let initial_prehook_calls = PreDeposit::<Runtime>::calls();
+		let initial_posthook_calls = PostDeposit::<Runtime>::calls();
+		assert_ok!(Tokens::do_deposit(DOT, &CHARLIE, 0, false, true),);
+		assert_eq!(PreDeposit::<Runtime>::calls(), initial_prehook_calls);
+		assert_eq!(PostDeposit::<Runtime>::calls(), initial_posthook_calls);
+
+		assert_ok!(Tokens::do_deposit(DOT, &CHARLIE, 100, false, true),);
+		assert_eq!(PreDeposit::<Runtime>::calls(), initial_prehook_calls + 1);
+		assert_eq!(PostDeposit::<Runtime>::calls(), initial_posthook_calls + 1);
+
+		assert_noop!(
+			Tokens::do_deposit(DOT, &BOB, 1, false, true),
+			Error::<Runtime>::ExistentialDeposit
+		);
+		// The prehook is called
+		assert_eq!(PreDeposit::<Runtime>::calls(), initial_prehook_calls + 2);
+		// The posthook is not called
+		assert_eq!(PostDeposit::<Runtime>::calls(), initial_posthook_calls + 1);
+	});
+}
+
+#[test]
+fn post_deposit_can_use_new_balance() {
+	ExtBuilder::default().build().execute_with(|| {
+		let initial_balance = Tokens::free_balance(DOT, &CHARLIE);
+		// The following will fail unless Charlie's new balance can be used by the hook,
+		// because `initial_balance + 100` is higher than Charlie's initial balance.
+		// If this fails, the posthook is called too soon.
+		assert_ok!(Tokens::do_deposit(DOT, &CHARLIE, initial_balance + 100, false, true),);
+	});
+}
+
+#[test]
+fn transfer_hooks_work() {
+	ExtBuilder::default()
+		.balances(vec![(ALICE, DOT, 100)])
+		.build()
+		.execute_with(|| {
+			let initial_prehook_calls = PreTransfer::<Runtime>::calls();
+			let initial_posthook_calls = PostTransfer::<Runtime>::calls();
+			assert_ok!(Tokens::do_transfer(
+				DOT,
+				&ALICE,
+				&CHARLIE,
+				0,
+				ExistenceRequirement::AllowDeath
+			),);
+			assert_eq!(PreTransfer::<Runtime>::calls(), initial_prehook_calls);
+			assert_eq!(PostTransfer::<Runtime>::calls(), initial_posthook_calls);
+
+			assert_ok!(Tokens::do_transfer(
+				DOT,
+				&ALICE,
+				&CHARLIE,
+				10,
+				ExistenceRequirement::AllowDeath
+			));
+			assert_eq!(PreTransfer::<Runtime>::calls(), initial_prehook_calls + 1);
+			assert_eq!(PostTransfer::<Runtime>::calls(), initial_posthook_calls + 1);
+
+			assert_noop!(
+				Tokens::do_transfer(DOT, &ALICE, &BOB, 1, ExistenceRequirement::AllowDeath),
+				Error::<Runtime>::ExistentialDeposit
+			);
+			// The prehook is called
+			assert_eq!(PreTransfer::<Runtime>::calls(), initial_prehook_calls + 2);
+			// The posthook is not called
+			assert_eq!(PostTransfer::<Runtime>::calls(), initial_posthook_calls + 1);
+		});
+}
+
+#[test]
+fn post_transfer_can_use_new_balance() {
+	ExtBuilder::default()
+		.balances(vec![(ALICE, DOT, 100)])
+		.build()
+		.execute_with(|| {
+			let initial_balance = Tokens::free_balance(DOT, &CHARLIE);
+			// The following will fail unless Charlie's new balance can be used by the hook,
+			// because `initial_balance + 100` is higher than Charlie's initial balance.
+			// If this fails, the posthook is called too soon.
+			assert_ok!(Tokens::do_transfer(
+				DOT,
+				&ALICE,
+				&CHARLIE,
+				initial_balance + 100,
+				ExistenceRequirement::AllowDeath
+			));
+		});
 }

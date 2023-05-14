@@ -19,30 +19,30 @@ pub type BlockNumber = u64;
 pub type Balance = u128;
 
 impl frame_system::Config for Runtime {
-    type Origin = Origin;
-    type Index = u64;
-    type BlockNumber = BlockNumber;
-    type Call = Call;
-    type Hash = H256;
-    type Hashing = ::sp_runtime::traits::BlakeTwo256;
-    type AccountId = AccountId;
-    type Lookup = IdentityLookup<Self::AccountId>;
-    type Header = Header;
-    type Event = Event;
-    type BlockHashCount = ConstU64<250>;
-    type BlockWeights = ();
-    type BlockLength = ();
-    type Version = ();
-    type PalletInfo = PalletInfo;
-    type AccountData = pallet_balances::AccountData<Balance>;
-    type OnNewAccount = ();
-    type OnKilledAccount = ();
-    type DbWeight = ();
-    type BaseCallFilter = Everything;
-    type SystemWeightInfo = ();
-    type SS58Prefix = ();
-    type OnSetCode = ();
-    type MaxConsumers = ConstU32<16>;
+	type RuntimeOrigin = RuntimeOrigin;
+	type Index = u64;
+	type BlockNumber = BlockNumber;
+	type RuntimeCall = RuntimeCall;
+	type Hash = H256;
+	type Hashing = ::sp_runtime::traits::BlakeTwo256;
+	type AccountId = AccountId;
+	type Lookup = IdentityLookup<Self::AccountId>;
+	type Header = Header;
+	type RuntimeEvent = RuntimeEvent;
+	type BlockHashCount = ConstU64<250>;
+	type BlockWeights = ();
+	type BlockLength = ();
+	type Version = ();
+	type PalletInfo = PalletInfo;
+	type AccountData = ();
+	type OnNewAccount = ();
+	type OnKilledAccount = ();
+	type DbWeight = ();
+	type BaseCallFilter = Everything;
+	type SystemWeightInfo = ();
+	type SS58Prefix = ();
+	type OnSetCode = ();
+	type MaxConsumers = ConstU32<16>;
 }
 
 parameter_types! {

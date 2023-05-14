@@ -1,7 +1,7 @@
-use crate::arithmetic;
+use crate::{arithmetic, Happened};
 use codec::{Codec, FullCodec, MaxEncodedLen};
 pub use frame_support::{
-	traits::{BalanceStatus, LockIdentifier},
+	traits::{BalanceStatus, DefensiveSaturating, LockIdentifier},
 	transactional,
 };
 use sp_runtime::{
@@ -303,13 +303,14 @@ pub trait NamedMultiReservableCurrency<AccountId>: MultiReservableCurrency<Accou
 		let current = Self::reserved_balance_named(id, currency_id, who);
 		match current.cmp(&value) {
 			Ordering::Less => {
-				// we checked value > current
-				Self::reserve_named(id, currency_id, who, value - current)
+				// we checked value > current but just to be defensive here.
+				Self::reserve_named(id, currency_id, who, value.defensive_saturating_sub(current))
 			}
 			Ordering::Equal => Ok(()),
 			Ordering::Greater => {
-				// we always have enough balance to unreserve here
-				Self::unreserve_named(id, currency_id, who, current - value);
+				// we always have enough balance to unreserve here but just to be defensive
+				// here.
+				Self::unreserve_named(id, currency_id, who, current.defensive_saturating_sub(value));
 				Ok(())
 			}
 		}
@@ -585,13 +586,14 @@ pub trait NamedBasicReservableCurrency<AccountId, ReserveIdentifier>: BasicReser
 		let current = Self::reserved_balance_named(id, who);
 		match current.cmp(&value) {
 			Ordering::Less => {
-				// we checked value > current
-				Self::reserve_named(id, who, value - current)
+				// we checked value > current but just to be defensive here.
+				Self::reserve_named(id, who, value.defensive_saturating_sub(current))
 			}
 			Ordering::Equal => Ok(()),
 			Ordering::Greater => {
-				// we always have enough balance to unreserve here
-				Self::unreserve_named(id, who, current - value);
+				// we always have enough balance to unreserve here but just to be defensive
+				// here.
+				Self::unreserve_named(id, who, current.defensive_saturating_sub(value));
 				Ok(())
 			}
 		}
@@ -656,4 +658,72 @@ impl<AccountId> TransferAll<AccountId> for Tuple {
 		} )* );
 		Ok(())
 	}
+}
+
+/// Hook to run before slashing an account.
+pub trait OnSlash<AccountId, CurrencyId, Balance> {
+	fn on_slash(currency_id: CurrencyId, who: &AccountId, amount: Balance);
+}
+
+impl<AccountId, CurrencyId, Balance> OnSlash<AccountId, CurrencyId, Balance> for () {
+	fn on_slash(_: CurrencyId, _: &AccountId, _: Balance) {}
+}
+
+/// Hook to run before depositing into an account.
+pub trait OnDeposit<AccountId, CurrencyId, Balance> {
+	fn on_deposit(currency_id: CurrencyId, who: &AccountId, amount: Balance) -> DispatchResult;
+}
+
+impl<AccountId, CurrencyId, Balance> OnDeposit<AccountId, CurrencyId, Balance> for () {
+	fn on_deposit(_: CurrencyId, _: &AccountId, _: Balance) -> DispatchResult {
+		Ok(())
+	}
+}
+
+/// Hook to run before transferring from an account to another.
+pub trait OnTransfer<AccountId, CurrencyId, Balance> {
+	fn on_transfer(currency_id: CurrencyId, from: &AccountId, to: &AccountId, amount: Balance) -> DispatchResult;
+}
+
+impl<AccountId, CurrencyId, Balance> OnTransfer<AccountId, CurrencyId, Balance> for () {
+	fn on_transfer(_: CurrencyId, _: &AccountId, _: &AccountId, _: Balance) -> DispatchResult {
+		Ok(())
+	}
+}
+
+pub trait MutationHooks<AccountId, CurrencyId, Balance> {
+	/// Handler to burn or transfer account's dust
+	type OnDust: OnDust<AccountId, CurrencyId, Balance>;
+
+	/// Hook to run before slashing an account.
+	type OnSlash: OnSlash<AccountId, CurrencyId, Balance>;
+
+	/// Hook to run before depositing into an account.
+	type PreDeposit: OnDeposit<AccountId, CurrencyId, Balance>;
+
+	/// Hook to run after depositing into an account.
+	type PostDeposit: OnDeposit<AccountId, CurrencyId, Balance>;
+
+	/// Hook to run before transferring from an account to another.
+	type PreTransfer: OnTransfer<AccountId, CurrencyId, Balance>;
+
+	/// Hook to run after transferring from an account to another.
+	type PostTransfer: OnTransfer<AccountId, CurrencyId, Balance>;
+
+	/// Handler for when an account was created
+	type OnNewTokenAccount: Happened<(AccountId, CurrencyId)>;
+
+	/// Handler for when an account was created
+	type OnKilledTokenAccount: Happened<(AccountId, CurrencyId)>;
+}
+
+impl<AccountId, CurrencyId, Balance> MutationHooks<AccountId, CurrencyId, Balance> for () {
+	type OnDust = ();
+	type OnSlash = ();
+	type PreDeposit = ();
+	type PostDeposit = ();
+	type PreTransfer = ();
+	type PostTransfer = ();
+	type OnNewTokenAccount = ();
+	type OnKilledTokenAccount = ();
 }

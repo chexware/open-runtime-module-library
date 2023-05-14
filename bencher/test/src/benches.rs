@@ -6,7 +6,7 @@ use frame_support::assert_ok;
 use orml_bencher::{benches, Bencher};
 
 fn set_value(b: &mut Bencher) {
-	let result = b.bench(|| Test::set_value(Origin::signed(1), 1));
+	let result = b.bench(|| Test::set_value(RuntimeOrigin::signed(1), 1));
 	assert_ok!(result);
 	assert_eq!(Test::value(), Some(1 + 1));
 }
@@ -25,6 +25,7 @@ fn remove_all_bar(b: &mut Bencher) {
 }
 
 fn remove_all_bar_with_limit(b: &mut Bencher) {
+	b.count_clear_prefix();
 	Bar::<Runtime>::insert(1, 1);
 	b.bench(|| {
 		Test::remove_all_bar_with_limit();

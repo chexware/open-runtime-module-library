@@ -1,9 +1,9 @@
 use crate as payment;
 use crate::PaymentDetail;
 use frame_support::{
+	dispatch::DispatchClass,
 	parameter_types,
 	traits::{ConstU32, Contains, Everything, GenesisBuild, Hooks, OnFinalize},
-	weights::DispatchClass,
 };
 use frame_system as system;
 use orml_traits::parameter_type_with_key;
@@ -53,8 +53,8 @@ impl system::Config for Test {
 	type BlockWeights = ();
 	type BlockLength = ();
 	type DbWeight = ();
-	type Origin = Origin;
-	type Call = Call;
+	type RuntimeOrigin = RuntimeOrigin;
+	type RuntimeCall = RuntimeCall;
 	type Index = u64;
 	type BlockNumber = u64;
 	type Hash = H256;
@@ -62,7 +62,7 @@ impl system::Config for Test {
 	type AccountId = AccountId;
 	type Lookup = IdentityLookup<Self::AccountId>;
 	type Header = Header;
-	type Event = Event;
+	type RuntimeEvent = RuntimeEvent;
 	type BlockHashCount = BlockHashCount;
 	type Version = ();
 	type PalletInfo = PalletInfo;
@@ -96,16 +96,14 @@ impl orml_tokens::Config for Test {
 	type Amount = i64;
 	type Balance = Balance;
 	type CurrencyId = u32;
-	type Event = Event;
+	type RuntimeEvent = RuntimeEvent;
 	type ExistentialDeposits = ExistentialDeposits;
-	type OnDust = ();
+	type CurrencyHooks = ();
 	type WeightInfo = ();
 	type MaxLocks = MaxLocks;
 	type DustRemovalWhitelist = MockDustRemovalWhitelist;
 	type MaxReserves = ConstU32<2>;
 	type ReserveIdentifier = ReserveIdentifier;
-	type OnNewTokenAccount = ();
-	type OnKilledTokenAccount = ();
 }
 
 pub struct MockDisputeResolver;
@@ -138,7 +136,7 @@ parameter_types! {
 }
 
 impl payment::Config for Test {
-	type Event = Event;
+	type RuntimeEvent = RuntimeEvent;
 	type Asset = Tokens;
 	type DisputeResolver = MockDisputeResolver;
 	type IncentivePercentage = IncentivePercentage;
@@ -185,7 +183,7 @@ pub fn run_n_blocks(n: u64) -> u64 {
 		};
 		// ensure the on_idle is executed
 		<frame_system::Pallet<Test>>::register_extra_weight_unchecked(
-			Payment::on_idle(block_number, idle_weight),
+			Payment::on_idle(block_number, frame_support::weights::Weight::from_ref_time(idle_weight)),
 			DispatchClass::Mandatory,
 		);
 

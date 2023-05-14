@@ -42,8 +42,8 @@ pub const RID_2: ReserveIdentifier = [2u8; 8];
 use crate as tokens;
 
 impl frame_system::Config for Runtime {
-	type Origin = Origin;
-	type Call = Call;
+	type RuntimeOrigin = RuntimeOrigin;
+	type RuntimeCall = RuntimeCall;
 	type Index = u64;
 	type BlockNumber = u64;
 	type Hash = H256;
@@ -51,7 +51,7 @@ impl frame_system::Config for Runtime {
 	type AccountId = AccountId;
 	type Lookup = IdentityLookup<Self::AccountId>;
 	type Header = Header;
-	type Event = Event;
+	type RuntimeEvent = RuntimeEvent;
 	type BlockHashCount = ConstU64<250>;
 	type BlockWeights = ();
 	type BlockLength = ();
@@ -119,7 +119,7 @@ impl pallet_treasury::Config for Runtime {
 	type Currency = MockCurrencyAdapter;
 	type ApproveOrigin = frame_system::EnsureRoot<AccountId>;
 	type RejectOrigin = frame_system::EnsureRoot<AccountId>;
-	type Event = Event;
+	type RuntimeEvent = RuntimeEvent;
 	type OnSlash = ();
 	type ProposalBond = ProposalBond;
 	type ProposalBondMinimum = ProposalBondMinimum;
@@ -187,7 +187,7 @@ parameter_types! {
 
 impl pallet_elections_phragmen::Config for Runtime {
 	type PalletId = ElectionsPhragmenPalletId;
-	type Event = Event;
+	type RuntimeEvent = RuntimeEvent;
 	type Currency = MockCurrencyAdapter;
 	type CurrencyToVote = SaturatingCurrencyToVote;
 	type ChangeMembers = TestChangeMembers;
@@ -198,6 +198,8 @@ impl pallet_elections_phragmen::Config for Runtime {
 	type TermDuration = ConstU64<5>;
 	type DesiredMembers = ConstU32<2>;
 	type DesiredRunnersUp = ConstU32<2>;
+	type MaxCandidates = ConstU32<5>;
+	type MaxVoters = ConstU32<5>;
 	type LoserCandidate = ();
 	type KickedMember = ();
 	type WeightInfo = ();
@@ -226,10 +228,18 @@ thread_local! {
 	pub static KILLED: RefCell<Vec<(AccountId, CurrencyId)>> = RefCell::new(vec![]);
 }
 
-pub struct TrackCreatedAccounts;
-impl TrackCreatedAccounts {
-	pub fn accounts() -> Vec<(AccountId, CurrencyId)> {
-		CREATED.with(|accounts| accounts.borrow().clone())
+pub struct TrackCreatedAccounts<T>(marker::PhantomData<T>);
+impl<T: Config> TrackCreatedAccounts<T>
+where
+	T::AccountId: From<AccountId32> + Into<AccountId32>,
+	T::CurrencyId: From<u32> + Into<u32>,
+{
+	pub fn accounts() -> Vec<(T::AccountId, T::CurrencyId)> {
+		CREATED
+			.with(|accounts| accounts.borrow().clone())
+			.iter()
+			.map(|account| (account.0.clone().into(), account.1.clone().into()))
+			.collect()
 	}
 
 	pub fn reset() {
@@ -238,18 +248,30 @@ impl TrackCreatedAccounts {
 		});
 	}
 }
-impl Happened<(AccountId, CurrencyId)> for TrackCreatedAccounts {
-	fn happened((who, currency): &(AccountId, CurrencyId)) {
+impl<T: Config> Happened<(T::AccountId, T::CurrencyId)> for TrackCreatedAccounts<T>
+where
+	T::AccountId: From<AccountId32> + Into<AccountId32>,
+	T::CurrencyId: From<u32> + Into<u32>,
+{
+	fn happened((who, currency): &(T::AccountId, T::CurrencyId)) {
 		CREATED.with(|accounts| {
-			accounts.borrow_mut().push((who.clone(), *currency));
+			accounts.borrow_mut().push((who.clone().into(), (*currency).into()));
 		});
 	}
 }
 
-pub struct TrackKilledAccounts;
-impl TrackKilledAccounts {
-	pub fn accounts() -> Vec<(AccountId, CurrencyId)> {
-		KILLED.with(|accounts| accounts.borrow().clone())
+pub struct TrackKilledAccounts<T>(marker::PhantomData<T>);
+impl<T: Config> TrackKilledAccounts<T>
+where
+	T::AccountId: From<AccountId32> + Into<AccountId32>,
+	T::CurrencyId: From<u32> + Into<u32>,
+{
+	pub fn accounts() -> Vec<(T::AccountId, T::CurrencyId)> {
+		KILLED
+			.with(|accounts| accounts.borrow().clone())
+			.iter()
+			.map(|account| (account.0.clone().into(), account.1.clone().into()))
+			.collect()
 	}
 
 	pub fn reset() {
@@ -258,11 +280,109 @@ impl TrackKilledAccounts {
 		});
 	}
 }
-impl Happened<(AccountId, CurrencyId)> for TrackKilledAccounts {
-	fn happened((who, currency): &(AccountId, CurrencyId)) {
+impl<T: Config> Happened<(T::AccountId, T::CurrencyId)> for TrackKilledAccounts<T>
+where
+	T::AccountId: From<AccountId32> + Into<AccountId32>,
+	T::CurrencyId: From<u32> + Into<u32>,
+{
+	fn happened((who, currency): &(T::AccountId, T::CurrencyId)) {
 		KILLED.with(|accounts| {
-			accounts.borrow_mut().push((who.clone(), *currency));
+			accounts.borrow_mut().push((who.clone().into(), (*currency).into()));
 		});
+	}
+}
+
+thread_local! {
+	pub static ON_SLASH_CALLS: RefCell<u32> = RefCell::new(0);
+	pub static ON_DEPOSIT_PREHOOK_CALLS: RefCell<u32> = RefCell::new(0);
+	pub static ON_DEPOSIT_POSTHOOK_CALLS: RefCell<u32> = RefCell::new(0);
+	pub static ON_TRANSFER_PREHOOK_CALLS: RefCell<u32> = RefCell::new(0);
+	pub static ON_TRANSFER_POSTHOOK_CALLS: RefCell<u32> = RefCell::new(0);
+}
+
+pub struct OnSlashHook<T>(marker::PhantomData<T>);
+impl<T: Config> OnSlash<T::AccountId, T::CurrencyId, T::Balance> for OnSlashHook<T> {
+	fn on_slash(_currency_id: T::CurrencyId, _account_id: &T::AccountId, _amount: T::Balance) {
+		ON_SLASH_CALLS.with(|cell| *cell.borrow_mut() += 1);
+	}
+}
+impl<T: Config> OnSlashHook<T> {
+	pub fn calls() -> u32 {
+		ON_SLASH_CALLS.with(|accounts| *accounts.borrow())
+	}
+}
+
+pub struct PreDeposit<T>(marker::PhantomData<T>);
+impl<T: Config> OnDeposit<T::AccountId, T::CurrencyId, T::Balance> for PreDeposit<T> {
+	fn on_deposit(_currency_id: T::CurrencyId, _account_id: &T::AccountId, _amount: T::Balance) -> DispatchResult {
+		ON_DEPOSIT_PREHOOK_CALLS.with(|cell| *cell.borrow_mut() += 1);
+		Ok(())
+	}
+}
+impl<T: Config> PreDeposit<T> {
+	pub fn calls() -> u32 {
+		ON_DEPOSIT_PREHOOK_CALLS.with(|accounts| accounts.borrow().clone())
+	}
+}
+
+pub struct PostDeposit<T>(marker::PhantomData<T>);
+impl<T: Config> OnDeposit<T::AccountId, T::CurrencyId, T::Balance> for PostDeposit<T> {
+	fn on_deposit(currency_id: T::CurrencyId, account_id: &T::AccountId, amount: T::Balance) -> DispatchResult {
+		ON_DEPOSIT_POSTHOOK_CALLS.with(|cell| *cell.borrow_mut() += 1);
+		let account_balance: AccountData<T::Balance> =
+			tokens::Pallet::<T>::accounts::<T::AccountId, T::CurrencyId>(account_id.clone(), currency_id);
+		assert!(
+			account_balance.free.ge(&amount),
+			"Posthook must run after the account balance is updated."
+		);
+		Ok(())
+	}
+}
+impl<T: Config> PostDeposit<T> {
+	pub fn calls() -> u32 {
+		ON_DEPOSIT_POSTHOOK_CALLS.with(|accounts| accounts.borrow().clone())
+	}
+}
+
+pub struct PreTransfer<T>(marker::PhantomData<T>);
+impl<T: Config> OnTransfer<T::AccountId, T::CurrencyId, T::Balance> for PreTransfer<T> {
+	fn on_transfer(
+		_currency_id: T::CurrencyId,
+		_from: &T::AccountId,
+		_to: &T::AccountId,
+		_amount: T::Balance,
+	) -> DispatchResult {
+		ON_TRANSFER_PREHOOK_CALLS.with(|cell| *cell.borrow_mut() += 1);
+		Ok(())
+	}
+}
+impl<T: Config> PreTransfer<T> {
+	pub fn calls() -> u32 {
+		ON_TRANSFER_PREHOOK_CALLS.with(|accounts| accounts.borrow().clone())
+	}
+}
+
+pub struct PostTransfer<T>(marker::PhantomData<T>);
+impl<T: Config> OnTransfer<T::AccountId, T::CurrencyId, T::Balance> for PostTransfer<T> {
+	fn on_transfer(
+		currency_id: T::CurrencyId,
+		_from: &T::AccountId,
+		to: &T::AccountId,
+		amount: T::Balance,
+	) -> DispatchResult {
+		ON_TRANSFER_POSTHOOK_CALLS.with(|cell| *cell.borrow_mut() += 1);
+		let account_balance: AccountData<T::Balance> =
+			tokens::Pallet::<T>::accounts::<T::AccountId, T::CurrencyId>(to.clone(), currency_id);
+		assert!(
+			account_balance.free.ge(&amount),
+			"Posthook must run after the account balance is updated."
+		);
+		Ok(())
+	}
+}
+impl<T: Config> PostTransfer<T> {
+	pub fn calls() -> u32 {
+		ON_TRANSFER_POSTHOOK_CALLS.with(|accounts| accounts.borrow().clone())
 	}
 }
 
@@ -270,16 +390,30 @@ parameter_types! {
 	pub DustReceiver: AccountId = PalletId(*b"orml/dst").into_account_truncating();
 }
 
+pub struct CurrencyHooks<T>(marker::PhantomData<T>);
+impl<T: Config> MutationHooks<T::AccountId, T::CurrencyId, T::Balance> for CurrencyHooks<T>
+where
+	T::AccountId: From<AccountId32> + Into<AccountId32>,
+	T::CurrencyId: From<u32> + Into<u32>,
+{
+	type OnDust = TransferDust<T, DustReceiver>;
+	type OnSlash = OnSlashHook<T>;
+	type PreDeposit = PreDeposit<T>;
+	type PostDeposit = PostDeposit<T>;
+	type PreTransfer = PreTransfer<T>;
+	type PostTransfer = PostTransfer<T>;
+	type OnNewTokenAccount = TrackCreatedAccounts<T>;
+	type OnKilledTokenAccount = TrackKilledAccounts<T>;
+}
+
 impl Config for Runtime {
-	type Event = Event;
+	type RuntimeEvent = RuntimeEvent;
 	type Balance = Balance;
 	type Amount = i64;
 	type CurrencyId = CurrencyId;
 	type WeightInfo = ();
 	type ExistentialDeposits = ExistentialDeposits;
-	type OnDust = TransferDust<Runtime, DustReceiver>;
-	type OnNewTokenAccount = TrackCreatedAccounts;
-	type OnKilledTokenAccount = TrackKilledAccounts;
+	type CurrencyHooks = CurrencyHooks<Runtime>;
 	type MaxLocks = ConstU32<2>;
 	type MaxReserves = ConstU32<2>;
 	type ReserveIdentifier = ReserveIdentifier;
@@ -303,18 +437,10 @@ construct_runtime!(
 	}
 );
 
+#[derive(Default)]
 pub struct ExtBuilder {
 	balances: Vec<(AccountId, CurrencyId, Balance)>,
 	treasury_genesis: bool,
-}
-
-impl Default for ExtBuilder {
-	fn default() -> Self {
-		Self {
-			balances: vec![],
-			treasury_genesis: false,
-		}
-	}
 }
 
 impl ExtBuilder {
@@ -344,8 +470,8 @@ impl ExtBuilder {
 			.unwrap();
 		}
 
-		TrackCreatedAccounts::reset();
-		TrackKilledAccounts::reset();
+		TrackCreatedAccounts::<Runtime>::reset();
+		TrackKilledAccounts::<Runtime>::reset();
 
 		let mut ext = sp_io::TestExternalities::new(t);
 		ext.execute_with(|| System::set_block_number(1));
