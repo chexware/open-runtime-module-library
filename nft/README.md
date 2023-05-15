@@ -2,7 +2,7 @@
 
 ### Overview
 
-Non-fungible-token module provides basic functions to create and manager NFT(non fungible token) such as `create_class`, `transfer`, `mint`, `burn`, `destroy_class`.
+Non-fungible-token module provides basic functions to create and manager NFT(non fungible token) such as `create_class`, `transfer`, `mint`, `burn`, `destroy_class`, `transfer_stackable_nft`, `mint_stackable_nft`.
 
 - `create_class` create NFT(non fungible token) class
 - `transfer` transfer NFT(non fungible token) to another account.
