@@ -9,3 +9,6 @@ Non-fungible-token module provides basic functions to create and manager NFT(non
 - `mint` mint NFT(non fungible token)
 - `burn` burn NFT(non fungible token)
 - `destroy_class` destroy NFT(non fungible token) class
+- `transfer_stackable_nft` transfer stackable NFT(non fungible token) balance to another account
+- `mint_stackable_nft` mint stackable NFT(non fungible token)
+
