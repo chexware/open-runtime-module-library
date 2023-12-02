@@ -77,15 +77,11 @@ fn get_rustup_nightly(selected: Option<String>) -> Option<CargoCommand> {
 	let version = match selected {
 		Some(selected) => selected,
 		None => {
-			let output = Command::new("rustup")
-				.args(&["toolchain", "list"])
-				.output()
-				.ok()?
-				.stdout;
+			let output = Command::new("rustup").args(["toolchain", "list"]).output().ok()?.stdout;
 			let lines = output.as_slice().lines();
 
 			let mut latest_nightly = None;
-			for line in lines.filter_map(|l| l.ok()) {
+			for line in lines.map_while(Result::ok) {
 				if line.starts_with("nightly-") && line.ends_with(&host) {
 					// Rustup prints them sorted
 					latest_nightly = Some(line.clone());
@@ -194,12 +190,12 @@ fn create_check_toolchain_project(project_dir: &Path) {
 	let manifest_path = project_dir.join("Cargo.toml");
 
 	write_file_if_changed(
-		&manifest_path,
+		manifest_path,
 		r#"
 			[package]
 			name = "wasm-test"
 			version = "1.0.0"
-			edition = "2018"
+			edition = "2021"
 			build = "build.rs"
 
 			[lib]
@@ -260,7 +256,7 @@ fn check_wasm_toolchain_installed(cargo_command: CargoCommand) -> Result<CargoCo
 	let manifest_path = temp.path().join("Cargo.toml").display().to_string();
 
 	let mut build_cmd = cargo_command.command();
-	build_cmd.args(&[
+	build_cmd.args([
 		"build",
 		"--target=wasm32-unknown-unknown",
 		"--manifest-path",
@@ -272,7 +268,7 @@ fn check_wasm_toolchain_installed(cargo_command: CargoCommand) -> Result<CargoCo
 	}
 
 	let mut run_cmd = cargo_command.command();
-	run_cmd.args(&["run", "--manifest-path", &manifest_path]);
+	run_cmd.args(["run", "--manifest-path", &manifest_path]);
 
 	build_cmd.output().map_err(|_| err_msg.clone()).and_then(|s| {
 		if s.status.success() {

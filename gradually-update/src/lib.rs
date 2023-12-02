@@ -30,8 +30,11 @@ use frame_support::{
 	BoundedVec,
 };
 use frame_system::pallet_prelude::*;
-use sp_runtime::{traits::SaturatedConversion, DispatchResult, RuntimeDebug};
-use sp_std::convert::TryInto;
+use scale_info::TypeInfo;
+use sp_runtime::{
+	traits::{SaturatedConversion, Saturating},
+	DispatchResult, RuntimeDebug,
+};
 
 mod default_weight;
 mod mock;
@@ -40,7 +43,7 @@ mod tests;
 /// Gradually update a value stored at `key` to `target_value`,
 /// change `per_block` * `T::UpdateFrequency` per `T::UpdateFrequency`
 /// blocks.
-#[derive(Encode, Decode, Clone, Eq, PartialEq, MaxEncodedLen, RuntimeDebug)]
+#[derive(Encode, Decode, Clone, Eq, PartialEq, MaxEncodedLen, RuntimeDebug, TypeInfo)]
 pub struct GraduallyUpdate<Key, Value> {
 	pub key: Key,
 	pub target_value: Value,
@@ -66,14 +69,14 @@ pub mod module {
 
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
-		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
+		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
 		/// The frequency of updating values between blocks
 		#[pallet::constant]
 		type UpdateFrequency: Get<Self::BlockNumber>;
 
 		/// The origin that can schedule an update
-		type DispatchOrigin: EnsureOrigin<Self::Origin>;
+		type DispatchOrigin: EnsureOrigin<Self::RuntimeOrigin>;
 
 		/// Weight information for extrinsics in this module.
 		type WeightInfo: WeightInfo;
@@ -109,12 +112,20 @@ pub mod module {
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(crate) fn deposit_event)]
 	pub enum Event<T: Config> {
-		/// Gradually update added. [key, per_block, target_value]
-		GraduallyUpdateAdded(StorageKeyBytes<T>, StorageValueBytes<T>, StorageValueBytes<T>),
-		/// Gradually update cancelled. [key]
-		GraduallyUpdateCancelled(StorageKeyBytes<T>),
-		/// Gradually update applied. [block_number, key, target_value]
-		Updated(T::BlockNumber, StorageKeyBytes<T>, StorageValueBytes<T>),
+		/// Gradually update added.
+		GraduallyUpdateAdded {
+			key: StorageKeyBytes<T>,
+			per_block: StorageValueBytes<T>,
+			target_value: StorageValueBytes<T>,
+		},
+		/// Gradually update cancelled.
+		GraduallyUpdateCancelled { key: StorageKeyBytes<T> },
+		/// Gradually update applied.
+		Updated {
+			block_number: T::BlockNumber,
+			key: StorageKeyBytes<T>,
+			target_value: StorageValueBytes<T>,
+		},
 	}
 
 	/// All the on-going updates
@@ -138,7 +149,7 @@ pub mod module {
 			if Self::_need_update(now) {
 				T::WeightInfo::on_finalize(GraduallyUpdates::<T>::get().len() as u32)
 			} else {
-				0
+				Weight::zero()
 			}
 		}
 
@@ -151,6 +162,7 @@ pub mod module {
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
 		/// Add gradually_update to adjust numeric parameter.
+		#[pallet::call_index(0)]
 		#[pallet::weight(T::WeightInfo::gradually_update())]
 		pub fn gradually_update(origin: OriginFor<T>, update: GraduallyUpdateOf<T>) -> DispatchResult {
 			T::DispatchOrigin::try_origin(origin).map(|_| ()).or_else(ensure_root)?;
@@ -182,15 +194,16 @@ pub mod module {
 				Ok(())
 			})?;
 
-			Self::deposit_event(Event::GraduallyUpdateAdded(
-				update.key,
-				update.per_block,
-				update.target_value,
-			));
+			Self::deposit_event(Event::GraduallyUpdateAdded {
+				key: update.key,
+				per_block: update.per_block,
+				target_value: update.target_value,
+			});
 			Ok(())
 		}
 
 		/// Cancel gradually_update to adjust numeric parameter.
+		#[pallet::call_index(1)]
 		#[pallet::weight(T::WeightInfo::cancel_gradually_update())]
 		pub fn cancel_gradually_update(origin: OriginFor<T>, key: StorageKeyBytes<T>) -> DispatchResult {
 			T::DispatchOrigin::try_origin(origin).map(|_| ()).or_else(ensure_root)?;
@@ -204,7 +217,7 @@ pub mod module {
 				Ok(())
 			})?;
 
-			Self::deposit_event(Event::GraduallyUpdateCancelled(key));
+			Self::deposit_event(Event::GraduallyUpdateCancelled { key });
 			Ok(())
 		}
 	}
@@ -212,7 +225,7 @@ pub mod module {
 
 impl<T: Config> Pallet<T> {
 	fn _need_update(now: T::BlockNumber) -> bool {
-		now >= Self::last_updated_at() + T::UpdateFrequency::get()
+		now >= Self::last_updated_at().saturating_add(T::UpdateFrequency::get())
 	}
 
 	fn _on_finalize(now: T::BlockNumber) {
@@ -253,7 +266,11 @@ impl<T: Config> Pallet<T> {
 
 			let bounded_value: StorageValueBytes<T> = value.to_vec().try_into().unwrap();
 
-			Self::deposit_event(Event::Updated(now, update.key.clone(), bounded_value));
+			Self::deposit_event(Event::Updated {
+				block_number: now,
+				key: update.key.clone(),
+				target_value: bounded_value,
+			});
 
 			keep
 		});

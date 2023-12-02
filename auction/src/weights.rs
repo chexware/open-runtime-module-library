@@ -37,17 +37,17 @@ pub trait WeightInfo {
 /// Default weights.
 impl WeightInfo for () {
 	fn bid_collateral_auction() -> Weight {
-		(108_000_000 as Weight)
-			.saturating_add(RocksDbWeight::get().reads(8 as Weight))
-			.saturating_add(RocksDbWeight::get().writes(9 as Weight))
+		Weight::from_parts(108_000_000, 0)
+			.saturating_add(RocksDbWeight::get().reads(8 as u64))
+			.saturating_add(RocksDbWeight::get().writes(9 as u64))
 	}
 	fn on_finalize(c: u32, ) -> Weight {
-		(9_779_000 as Weight)
+		Weight::from_parts(9_779_000, 0)
 			// Standard Error: 13_000
-			.saturating_add((57_962_000 as Weight).saturating_mul(c as Weight))
-			.saturating_add(RocksDbWeight::get().reads(10 as Weight))
-			.saturating_add(RocksDbWeight::get().reads((3 as Weight).saturating_mul(c as Weight)))
-			.saturating_add(RocksDbWeight::get().writes(7 as Weight))
-			.saturating_add(RocksDbWeight::get().writes((3 as Weight).saturating_mul(c as Weight)))
+			.saturating_add(Weight::from_parts(57_962_000, 0).saturating_mul(c as u64))
+			.saturating_add(RocksDbWeight::get().reads(10 as u64))
+			.saturating_add(RocksDbWeight::get().reads((3 as u64).saturating_mul(c as u64)))
+			.saturating_add(RocksDbWeight::get().writes(7 as u64))
+			.saturating_add(RocksDbWeight::get().writes((3 as u64).saturating_mul(c as u64)))
 	}
 }

@@ -13,11 +13,12 @@
 #![allow(clippy::string_lit_as_bytes)]
 #![allow(clippy::unused_unit)]
 
+use codec::MaxEncodedLen;
 use frame_support::pallet_prelude::*;
 use frame_system::{ensure_signed, pallet_prelude::*};
 use orml_traits::{Auction, AuctionHandler, AuctionInfo, Change};
 use sp_runtime::{
-	traits::{AtLeast32BitUnsigned, Bounded, MaybeSerializeDeserialize, Member, One, Zero},
+	traits::{AtLeast32BitUnsigned, Bounded, CheckedAdd, MaybeSerializeDeserialize, Member, One, Zero},
 	DispatchError, DispatchResult,
 };
 
@@ -34,10 +35,16 @@ pub mod module {
 
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
-		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
+		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
 		/// The balance type for bidding.
-		type Balance: Parameter + Member + AtLeast32BitUnsigned + Default + Copy + MaybeSerializeDeserialize;
+		type Balance: Parameter
+			+ Member
+			+ AtLeast32BitUnsigned
+			+ Default
+			+ Copy
+			+ MaybeSerializeDeserialize
+			+ MaxEncodedLen;
 
 		/// The auction ID type.
 		type AuctionId: Parameter
@@ -47,7 +54,8 @@ pub mod module {
 			+ Copy
 			+ MaybeSerializeDeserialize
 			+ Bounded
-			+ codec::FullCodec;
+			+ codec::FullCodec
+			+ codec::MaxEncodedLen;
 
 		/// The `AuctionHandler` that allow custom bidding logic and handles
 		/// auction result.
@@ -68,10 +76,13 @@ pub mod module {
 
 	#[pallet::event]
 	#[pallet::generate_deposit(fn deposit_event)]
-	#[pallet::metadata(T::AuctionId = "AuctionId", T::AccountId = "AccountId", T::Balance = "Balance")]
 	pub enum Event<T: Config> {
-		/// A bid is placed. [auction_id, bidder, bidding_amount]
-		Bid(T::AuctionId, T::AccountId, T::Balance),
+		/// A bid is placed
+		Bid {
+			auction_id: T::AuctionId,
+			bidder: T::AccountId,
+			amount: T::Balance,
+		},
 	}
 
 	/// Stores on-going and future auctions. Closed auction are removed.
@@ -97,12 +108,12 @@ pub mod module {
 	#[pallet::hooks]
 	impl<T: Config> Hooks<T::BlockNumber> for Pallet<T> {
 		fn on_initialize(now: T::BlockNumber) -> Weight {
-			T::WeightInfo::on_finalize(AuctionEndTime::<T>::iter_prefix(&now).count() as u32)
+			T::WeightInfo::on_finalize(AuctionEndTime::<T>::iter_prefix(now).count() as u32)
 		}
 
 		fn on_finalize(now: T::BlockNumber) {
-			for (auction_id, _) in AuctionEndTime::<T>::drain_prefix(&now) {
-				if let Some(auction) = Auctions::<T>::take(&auction_id) {
+			for (auction_id, _) in AuctionEndTime::<T>::drain_prefix(now) {
+				if let Some(auction) = Auctions::<T>::take(auction_id) {
 					T::Handler::on_auction_ended(auction_id, auction.bid);
 				}
 			}
@@ -115,6 +126,7 @@ pub mod module {
 		///
 		/// The dispatch origin for this call must be `Signed` by the
 		/// transactor.
+		#[pallet::call_index(0)]
 		#[pallet::weight(T::WeightInfo::bid_collateral_auction())]
 		pub fn bid(origin: OriginFor<T>, id: T::AuctionId, #[pallet::compact] value: T::Balance) -> DispatchResult {
 			let from = ensure_signed(origin)?;
@@ -138,10 +150,10 @@ pub mod module {
 				match bid_result.auction_end_change {
 					Change::NewValue(new_end) => {
 						if let Some(old_end_block) = auction.end {
-							AuctionEndTime::<T>::remove(&old_end_block, id);
+							AuctionEndTime::<T>::remove(old_end_block, id);
 						}
 						if let Some(new_end_block) = new_end {
-							AuctionEndTime::<T>::insert(&new_end_block, id, ());
+							AuctionEndTime::<T>::insert(new_end_block, id, ());
 						}
 						auction.end = new_end;
 					}
@@ -152,7 +164,11 @@ pub mod module {
 				Ok(())
 			})?;
 
-			Self::deposit_event(Event::Bid(id, from, value));
+			Self::deposit_event(Event::Bid {
+				auction_id: id,
+				bidder: from,
+				amount: value,
+			});
 			Ok(())
 		}
 	}
@@ -172,10 +188,10 @@ impl<T: Config> Auction<T::AccountId, T::BlockNumber> for Pallet<T> {
 	) -> DispatchResult {
 		let auction = Auctions::<T>::get(id).ok_or(Error::<T>::AuctionNotExist)?;
 		if let Some(old_end) = auction.end {
-			AuctionEndTime::<T>::remove(&old_end, id);
+			AuctionEndTime::<T>::remove(old_end, id);
 		}
 		if let Some(new_end) = info.end {
-			AuctionEndTime::<T>::insert(&new_end, id, ());
+			AuctionEndTime::<T>::insert(new_end, id, ());
 		}
 		Auctions::<T>::insert(id, info);
 		Ok(())
@@ -189,20 +205,19 @@ impl<T: Config> Auction<T::AccountId, T::BlockNumber> for Pallet<T> {
 		let auction_id =
 			<AuctionsIndex<T>>::try_mutate(|n| -> sp_std::result::Result<Self::AuctionId, DispatchError> {
 				let id = *n;
-				ensure!(id != Self::AuctionId::max_value(), Error::<T>::NoAvailableAuctionId);
-				*n += One::one();
+				*n = n.checked_add(&One::one()).ok_or(Error::<T>::NoAvailableAuctionId)?;
 				Ok(id)
 			})?;
 		Auctions::<T>::insert(auction_id, auction);
 		if let Some(end_block) = end {
-			AuctionEndTime::<T>::insert(&end_block, auction_id, ());
+			AuctionEndTime::<T>::insert(end_block, auction_id, ());
 		}
 
 		Ok(auction_id)
 	}
 
 	fn remove_auction(id: Self::AuctionId) {
-		if let Some(auction) = Auctions::<T>::take(&id) {
+		if let Some(auction) = Auctions::<T>::take(id) {
 			if let Some(end_block) = auction.end {
 				AuctionEndTime::<T>::remove(end_block, id);
 			}

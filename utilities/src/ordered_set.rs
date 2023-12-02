@@ -1,14 +1,18 @@
-use codec::{Decode, Encode};
-use frame_support::{traits::Get, BoundedVec, DefaultNoBound};
-use sp_std::convert::TryInto;
+use codec::{Decode, Encode, MaxEncodedLen};
+use frame_support::{traits::Get, BoundedVec, CloneNoBound, DefaultNoBound, PartialEqNoBound};
+use scale_info::TypeInfo;
 #[cfg(feature = "std")]
 use sp_std::{fmt, prelude::*};
 
 /// An ordered set backed by `BoundedVec`
-#[derive(PartialEq, Eq, Encode, Decode, DefaultNoBound, Clone)]
-pub struct OrderedSet<T, S>(pub BoundedVec<T, S>);
+#[derive(PartialEqNoBound, Eq, Encode, Decode, DefaultNoBound, CloneNoBound, TypeInfo, MaxEncodedLen)]
+#[codec(mel_bound())]
+#[scale_info(skip_type_params(S))]
+pub struct OrderedSet<T: Ord + Encode + Decode + MaxEncodedLen + Clone + Eq + PartialEq, S: Get<u32>>(
+	pub BoundedVec<T, S>,
+);
 
-impl<T: Ord, S: Get<u32>> OrderedSet<T, S> {
+impl<T: Ord + Encode + Decode + MaxEncodedLen + Clone + Eq + PartialEq, S: Get<u32>> OrderedSet<T, S> {
 	/// Create a new empty set
 	pub fn new() -> Self {
 		Self(BoundedVec::default())
@@ -21,7 +25,7 @@ impl<T: Ord, S: Get<u32>> OrderedSet<T, S> {
 		v.sort();
 		v.dedup();
 
-		Self::from_sorted_set(v.try_into().expect("Did not add any values"))
+		Self::from_sorted_set(v.try_into().map_err(|_| ()).expect("Did not add any values"))
 	}
 
 	/// Create a set from a `Vec`.
@@ -62,7 +66,9 @@ impl<T: Ord, S: Get<u32>> OrderedSet<T, S> {
 	}
 }
 
-impl<T: Ord, S: Get<u32>> From<BoundedVec<T, S>> for OrderedSet<T, S> {
+impl<T: Ord + Encode + Decode + MaxEncodedLen + Clone + Eq + PartialEq, S: Get<u32>> From<BoundedVec<T, S>>
+	for OrderedSet<T, S>
+{
 	fn from(v: BoundedVec<T, S>) -> Self {
 		Self::from(v)
 	}
@@ -71,7 +77,7 @@ impl<T: Ord, S: Get<u32>> From<BoundedVec<T, S>> for OrderedSet<T, S> {
 #[cfg(feature = "std")]
 impl<T, S> fmt::Debug for OrderedSet<T, S>
 where
-	T: fmt::Debug,
+	T: Ord + Encode + Decode + MaxEncodedLen + Clone + Eq + PartialEq + fmt::Debug,
 	S: Get<u32>,
 {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -86,9 +92,9 @@ mod tests {
 	use sp_runtime::RuntimeDebug;
 
 	parameter_types! {
-		#[derive(PartialEq, RuntimeDebug)]
+		#[derive(PartialEq, Eq, RuntimeDebug)]
 		pub const Eight: u32 = 8;
-		#[derive(PartialEq, RuntimeDebug)]
+		#[derive(PartialEq, Eq, RuntimeDebug)]
 		pub const Five: u32 = 5;
 	}
 
