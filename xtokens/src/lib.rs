@@ -33,7 +33,6 @@
 #![allow(clippy::too_many_arguments)]
 
 use frame_support::{
-	log,
 	pallet_prelude::*,
 	require_transactional,
 	traits::{Contains, Get},
@@ -191,7 +190,7 @@ pub mod module {
 	}
 
 	#[pallet::hooks]
-	impl<T: Config> Hooks<T::BlockNumber> for Pallet<T> {}
+	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {}
 
 	#[pallet::pallet]
 	pub struct Pallet<T>(_);
@@ -725,14 +724,12 @@ pub mod module {
 		) -> Result<Xcm<T::RuntimeCall>, DispatchError> {
 			let mut reanchored_dest = dest;
 			if reserve == MultiLocation::parent() {
-				match dest {
-					MultiLocation {
-						parents,
-						interior: X1(Parachain(id)),
-					} if parents == 1 => {
-						reanchored_dest = Parachain(id).into();
-					}
-					_ => {}
+				if let MultiLocation {
+					parents: 1,
+					interior: X1(Parachain(id)),
+				} = dest
+				{
+					reanchored_dest = Parachain(id).into();
 				}
 			}
 
