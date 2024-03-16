@@ -17,12 +17,11 @@
 //! - `mint` - Mint NFT(non fungible token)
 //! - `burn` - Burn NFT(non fungible token)
 //! - `destroy_class` - Destroy NFT(non fungible token) class
-
-#![cfg_attr(not(feature = "std"), no_std)]
-#![allow(clippy::unused_unit)]
+//! - `transfer_stackable_nft` - Transfer stackable NFT(non fungible token) balance to another account
+//! - `mint_stackable_nft` - Mint stackable NFT(non fungible token)
 
 use codec::{Decode, Encode, MaxEncodedLen};
-use frame_support::{ensure, pallet_prelude::*, traits::Get, BoundedVec, Parameter};
+use frame_support::{ensure, pallet_prelude::*, traits::{Currency, Get, ReservableCurrency}, BoundedVec, Parameter};
 use frame_system::pallet_prelude::*;
 use scale_info::TypeInfo;
 use sp_runtime::{
@@ -70,6 +69,8 @@ pub mod module {
 		type ClassId: Parameter + Member + AtLeast32BitUnsigned + Default + Copy + MaxEncodedLen;
 		/// The token ID type
 		type TokenId: Parameter + Member + AtLeast32BitUnsigned + Default + Copy + MaxEncodedLen;
+		/// Currency type for reserve/unreserve balance
+		type Currency: Currency<Self::AccountId> + ReservableCurrency<Self::AccountId>;
 		/// The class properties type
 		type ClassData: Parameter + Member + MaybeSerializeDeserialize;
 		/// The token properties type
@@ -102,6 +103,7 @@ pub mod module {
 		<T as Config>::ClassData,
 		Vec<GenesisTokenData<T>>, // Vector of tokens belonging to this class
 	);
+	pub type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
 	/// Error for non-fungible-token module.
 	#[pallet::error]
