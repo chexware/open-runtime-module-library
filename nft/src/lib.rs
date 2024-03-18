@@ -313,6 +313,43 @@ impl<T: Config> Pallet<T> {
 		})
 	}
 
+	/// Mint NFT(non fungible token) to `owner`
+    pub fn mint_with_token_id(
+        owner: &T::AccountId,
+        class_id: T::ClassId,
+        token_id: T::TokenId,
+        metadata: Vec<u8>,
+        data: T::TokenData,
+    ) -> Result<T::TokenId, DispatchError> {
+        // Ensure autoincrement NextTokenId does not exists
+        ensure!(!NextTokenId::<T>::contains_key(class_id), Error::<T>::TokenIdRequired);
+
+        // Ensure token id doesn't exists
+        ensure!(!Tokens::<T>::contains_key(class_id, token_id), Error::<T>::NoAvailableTokenId);
+
+        let bounded_metadata: BoundedVec<u8, T::MaxTokenMetadata> =
+            metadata.try_into().map_err(|_| Error::<T>::MaxMetadataExceeded)?;
+
+        Classes::<T>::try_mutate(class_id, |class_info| -> DispatchResult {
+            let info = class_info.as_mut().ok_or(Error::<T>::ClassNotFound)?;
+            info.total_issuance = info
+                .total_issuance
+                .checked_add(&One::one())
+                .ok_or(ArithmeticError::Overflow)?;
+            Ok(())
+        })?;
+
+        let token_info = TokenInfo {
+            metadata: bounded_metadata,
+            owner: owner.clone(),
+            data,
+        };
+        Tokens::<T>::insert(class_id, token_id, token_info);
+        TokensByOwner::<T>::insert((owner, class_id, token_id), ());
+
+        Ok(token_id)
+    }
+
 	/// Burn NFT(non fungible token) from `owner`
 	pub fn burn(owner: &T::AccountId, token: (T::ClassId, T::TokenId)) -> DispatchResult {
 		Tokens::<T>::try_mutate_exists(token.0, token.1, |token_info| -> DispatchResult {
