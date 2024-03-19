@@ -25,7 +25,6 @@ sp-io = { git = "https://github.com/paritytech/polkadot-sdk", branch = "release-
 default = ["std"]
 std = [
 	"serde",
-
 	"codec/std",
 	"frame-support/std",
 	"frame-system/std",
