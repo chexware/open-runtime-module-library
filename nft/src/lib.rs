@@ -19,6 +19,8 @@
 //! - `destroy_class` - Destroy NFT(non fungible token) class
 //! - `transfer_stackable_nft` - Transfer stackable NFT(non fungible token) balance to another account
 //! - `mint_stackable_nft` - Mint stackable NFT(non fungible token)
+#![cfg_attr(not(feature = "std"), no_std)]
+#![allow(clippy::unused_unit)]
 
 use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::{ensure, pallet_prelude::*, traits::{Currency, Get, ReservableCurrency}, BoundedVec, Parameter};
