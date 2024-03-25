@@ -1,4 +1,4 @@
-use codec::FullCodec;
+use parity_scale_codec::FullCodec;
 use sp_runtime::traits::{Convert, MaybeSerializeDeserialize, SaturatedConversion};
 use sp_std::{
 	cmp::{Eq, PartialEq},
@@ -93,7 +93,7 @@ impl<
 
 	fn check_in(_origin: &MultiLocation, _what: &MultiAsset, _context: &XcmContext) {}
 
-	fn deposit_asset(asset: &MultiAsset, location: &MultiLocation, _context: &XcmContext) -> Result {
+	fn deposit_asset(asset: &MultiAsset, location: &MultiLocation, _context: Option<&XcmContext>) -> Result {
 		match (
 			AccountIdConvert::convert_location(location),
 			CurrencyIdConvert::convert(asset.clone()),

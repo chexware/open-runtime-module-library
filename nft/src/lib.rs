@@ -17,14 +17,13 @@
 //! - `mint` - Mint NFT(non fungible token)
 //! - `burn` - Burn NFT(non fungible token)
 //! - `destroy_class` - Destroy NFT(non fungible token) class
-//! - `transfer_stackable_nft` - Transfer stackable NFT(non fungible token) balance to another account
-//! - `mint_stackable_nft` - Mint stackable NFT(non fungible token)
+
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(clippy::unused_unit)]
 
-use codec::{Decode, Encode, MaxEncodedLen};
-use frame_support::{ensure, pallet_prelude::*, traits::{Currency, Get, ReservableCurrency}, BoundedVec, Parameter};
+use frame_support::{ensure, pallet_prelude::*, traits::Get, BoundedVec, Parameter};
 use frame_system::pallet_prelude::*;
+use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_runtime::{
 	traits::{AtLeast32BitUnsigned, CheckedAdd, CheckedSub, MaybeSerializeDeserialize, Member, One, Zero},
@@ -71,8 +70,6 @@ pub mod module {
 		type ClassId: Parameter + Member + AtLeast32BitUnsigned + Default + Copy + MaxEncodedLen;
 		/// The token ID type
 		type TokenId: Parameter + Member + AtLeast32BitUnsigned + Default + Copy + MaxEncodedLen;
-		/// Currency type for reserve/unreserve balance
-		type Currency: Currency<Self::AccountId> + ReservableCurrency<Self::AccountId>;
 		/// The class properties type
 		type ClassData: Parameter + Member + MaybeSerializeDeserialize;
 		/// The token properties type
@@ -105,7 +102,6 @@ pub mod module {
 		<T as Config>::ClassData,
 		Vec<GenesisTokenData<T>>, // Vector of tokens belonging to this class
 	);
-	pub type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
 	/// Error for non-fungible-token module.
 	#[pallet::error]
@@ -125,17 +121,7 @@ pub mod module {
 		CannotDestroyClass,
 		/// Failed because the Maximum amount of metadata was exceeded
 		MaxMetadataExceeded,
-		/// Invalid stackable NFT transfer (stored value is equal to zero)
-		InvalidStackableNftTransfer,
-		/// Invalid stackable NFT balance
-		InvalidStackableNftAmount,
-		/// The stackable collection already exists
-		StackableCollectionAlreadyExists,
-		/// This collection is not autoincrement id
-		TokenIdRequired,
-		/// Token already exists
-		TokenAlreadyExist
-	}	
+	}
 
 	/// Next available class ID.
 	#[pallet::storage]
@@ -175,26 +161,6 @@ pub mod module {
 		(),
 		ValueQuery,
 	>;
-
-	#[pallet::storage]
-    #[pallet::getter(fn get_stackable_collection)]
-    /// Index stackable collections by (class ID, token ID)
-    pub(super) type StackableCollection<T: Config> =
-    StorageMap<_, Blake2_128Concat, (T::ClassId, T::TokenId), (), OptionQuery>;
-
-    #[pallet::storage]
-    #[pallet::getter(fn get_stackable_collections_balances)]
-    /// Index stackable collections balances
-    pub(super) type StackableCollectionsBalances<T: Config> = StorageNMap<
-        _,
-        (
-            NMapKey<Blake2_128Concat, T::ClassId>,
-            NMapKey<Blake2_128Concat, T::TokenId>,
-            NMapKey<Blake2_128Concat, T::AccountId>,
-        ),
-        BalanceOf<T>,
-        ValueQuery,
-    >;
 
 	#[pallet::genesis_config]
 	pub struct GenesisConfig<T: Config> {
@@ -315,43 +281,6 @@ impl<T: Config> Pallet<T> {
 		})
 	}
 
-	/// Mint NFT(non fungible token) to `owner`
-    pub fn mint_with_token_id(
-        owner: &T::AccountId,
-        class_id: T::ClassId,
-        token_id: T::TokenId,
-        metadata: Vec<u8>,
-        data: T::TokenData,
-    ) -> Result<T::TokenId, DispatchError> {
-        // Ensure autoincrement NextTokenId does not exists
-        ensure!(!NextTokenId::<T>::contains_key(class_id), Error::<T>::TokenIdRequired);
-
-        // Ensure token id doesn't exists
-        ensure!(!Tokens::<T>::contains_key(class_id, token_id), Error::<T>::NoAvailableTokenId);
-
-        let bounded_metadata: BoundedVec<u8, T::MaxTokenMetadata> =
-            metadata.try_into().map_err(|_| Error::<T>::MaxMetadataExceeded)?;
-
-        Classes::<T>::try_mutate(class_id, |class_info| -> DispatchResult {
-            let info = class_info.as_mut().ok_or(Error::<T>::ClassNotFound)?;
-            info.total_issuance = info
-                .total_issuance
-                .checked_add(&One::one())
-                .ok_or(ArithmeticError::Overflow)?;
-            Ok(())
-        })?;
-
-        let token_info = TokenInfo {
-            metadata: bounded_metadata,
-            owner: owner.clone(),
-            data,
-        };
-        Tokens::<T>::insert(class_id, token_id, token_info);
-        TokensByOwner::<T>::insert((owner, class_id, token_id), ());
-
-        Ok(token_id)
-    }
-
 	/// Burn NFT(non fungible token) from `owner`
 	pub fn burn(owner: &T::AccountId, token: (T::ClassId, T::TokenId)) -> DispatchResult {
 		Tokens::<T>::try_mutate_exists(token.0, token.1, |token_info| -> DispatchResult {
@@ -389,86 +318,4 @@ impl<T: Config> Pallet<T> {
 	pub fn is_owner(account: &T::AccountId, token: (T::ClassId, T::TokenId)) -> bool {
 		TokensByOwner::<T>::contains_key((account, token.0, token.1))
 	}
-
-	 /// Mint stackable NFT
-	 pub fn mint_stackable_nft(
-        owner: &T::AccountId,
-        class_id: T::ClassId,
-        metadata: Vec<u8>,
-        data: T::TokenData,
-        amount: BalanceOf<T>,
-    ) -> Result<(T::TokenId, BalanceOf<T>), DispatchError> {
-        ensure!(amount > Zero::zero(), Error::<T>::InvalidStackableNftAmount);
-
-        NextTokenId::<T>::try_mutate(class_id, |id| -> Result<(T::TokenId, BalanceOf<T>), DispatchError> {
-            let bounded_metadata: BoundedVec<u8, T::MaxTokenMetadata> =
-                metadata.try_into().map_err(|_| Error::<T>::MaxMetadataExceeded)?;
-
-            let token_id = *id;
-            *id = id.checked_add(&One::one()).ok_or(Error::<T>::NoAvailableTokenId)?;
-
-            Classes::<T>::try_mutate(class_id, |class_info| -> DispatchResult {
-                let info = class_info.as_mut().ok_or(Error::<T>::ClassNotFound)?;
-                info.total_issuance = info
-                    .total_issuance
-                    .checked_add(&One::one())
-                    .ok_or(ArithmeticError::Overflow)?;
-                Ok(())
-            })?;
-
-            let token_info = TokenInfo {
-                metadata: bounded_metadata,
-                owner: owner.clone(),
-                data,
-            };
-            Tokens::<T>::insert(class_id, token_id, token_info);
-            TokensByOwner::<T>::insert((owner, class_id, token_id), ());
-
-            // Not likely to happen but ensure that the stackable collection balance is not
-            // already set
-            ensure!(
-				Self::get_stackable_collections_balances((class_id, token_id, owner.clone())) == Zero::zero(),
-				Error::<T>::StackableCollectionAlreadyExists
-			);
-
-            StackableCollectionsBalances::<T>::insert((class_id, token_id, owner.clone()), amount);
-            StackableCollection::<T>::insert((class_id, token_id), ());
-            Ok((token_id, amount))
-        })
-    }
-
-    /// Transfer stackable NFT
-    pub fn transfer_stackable_nft(
-        from: &T::AccountId,
-        to: &T::AccountId,
-        asset_id: (T::ClassId, T::TokenId),
-        amount: BalanceOf<T>,
-    ) -> DispatchResultWithPostInfo {
-        StackableCollectionsBalances::<T>::try_mutate(
-            (asset_id.0, asset_id.1, from.clone()),
-            |sender_balance| -> DispatchResultWithPostInfo {
-                StackableCollectionsBalances::<T>::try_mutate(
-                    (asset_id.0, asset_id.1, to.clone()),
-                    |receiver_balance| -> DispatchResultWithPostInfo {
-                        ensure!(
-							amount > Zero::zero()
-								&& Self::get_stackable_collections_balances((asset_id.0, asset_id.1, from.clone()))
-									>= amount,
-							Error::<T>::InvalidStackableNftTransfer
-						);
-
-                        *receiver_balance = receiver_balance.checked_add(&amount).ok_or(ArithmeticError::Overflow)?;
-                        *sender_balance = sender_balance.checked_sub(&amount).ok_or(ArithmeticError::Overflow)?;
-
-                        Ok(().into())
-                    },
-                )
-            },
-        )
-    }
-
-    /// Checks if token is stackable
-    pub fn is_stackable(token: (T::ClassId, T::TokenId)) -> Result<bool, DispatchError> {
-        Ok(Self::get_stackable_collection(token).is_some())
-    }
 }

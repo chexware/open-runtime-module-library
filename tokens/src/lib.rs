@@ -40,7 +40,6 @@
 
 pub use crate::imbalances::{NegativeImbalance, PositiveImbalance};
 
-use codec::MaxEncodedLen;
 use frame_support::{
 	ensure,
 	pallet_prelude::*,
@@ -57,6 +56,7 @@ use frame_support::{
 	transactional, BoundedVec,
 };
 use frame_system::{ensure_signed, pallet_prelude::*};
+use parity_scale_codec::MaxEncodedLen;
 use scale_info::TypeInfo;
 use sp_runtime::{
 	traits::{
@@ -425,7 +425,9 @@ pub mod module {
 
 	impl<T: Config> Default for GenesisConfig<T> {
 		fn default() -> Self {
-			GenesisConfig { balances: vec![] }
+			GenesisConfig {
+				balances: Default::default(),
+			}
 		}
 	}
 
@@ -1209,7 +1211,7 @@ impl<T: Config> MultiCurrency<T::AccountId> for Pallet<T> {
 
 		// slash free balance
 		if !free_slashed_amount.is_zero() {
-			// Cannot underflow becuase free_slashed_amount can never be greater than
+			// Cannot underflow because free_slashed_amount can never be greater than
 			// account.free but just to be defensive here.
 			Self::set_free_balance(
 				currency_id,
